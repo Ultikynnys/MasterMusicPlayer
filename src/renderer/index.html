@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: file:; media-src 'self' file:; font-src 'self';">
+    <title>Master Music Player</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div id="app">
+        <!-- Loading Overlay -->
+
+
+        <div id="loading-overlay" class="loading-overlay hidden">
+            <div class="loading-spinner">
+                <div class="spinner"></div>
+                <p id="loading-message">Downloading music...</p>
+            </div>
+        </div>
+
+        <!-- Header -->
+        <header class="header">
+            <div class="header-left">
+                <img src="assets/MMP_Banner.svg" alt="Master Music Player Banner" class="banner-image">
+            </div>
+            <div class="download-controls">
+                <input type="text" id="url-input" placeholder="YouTube/SoundCloud/Bandcamp URL" class="input">
+                <button id="download-btn" class="btn btn-secondary" disabled>Download</button>
+            </div>
+            <div class="header-right">
+                <button id="kofi-btn" class="btn btn-kofi" title="Support on Ko-fi">
+                    <img src="assets/support_me_on_kofi_dark.png" alt="Support me on Ko-fi" class="kofi-image">
+                </button>
+                <button id="github-btn" class="btn btn-icon btn-support" title="View on GitHub">
+                    <img src="assets/github.svg" alt="GitHub" width="24" height="24">
+                </button>
+                <button id="theme-btn" class="btn btn-icon btn-secondary" title="Change Theme">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-palette"><circle cx="13.5" cy="6.5" r=".5"></circle><circle cx="17.5" cy="10.5" r=".5"></circle><circle cx="8.5" cy="7.5" r=".5"></circle><circle cx="6.5" cy="12.5" r=".5"></circle><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"></path></svg>
+                </button>
+                <button id="settings-btn" class="btn btn-icon btn-secondary" title="Settings">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-settings"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+                </button>
+                <button id="backup-btn" class="btn btn-icon btn-secondary" title="Backup & Restore">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-save"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>
+                </button>
+            </div>
+        </header>
+
+        <!-- Main Content -->
+        <div class="main-content">
+            <!-- Sidebar -->
+            <aside class="sidebar">
+                <div class="sidebar-section">
+                    <h3>Playlists</h3>
+                    <div class="playlist-controls">
+                        <button id="create-playlist-btn" class="btn btn-secondary">+ New Playlist</button>
+                    </div>
+                    <div id="playlists-container" class="playlists-list">
+                        <!-- Playlists will be populated here -->
+                    </div>
+                </div>
+
+
+            </aside>
+
+            <!-- Content Area -->
+            <main class="content">
+                <!-- Background Visualizer -->
+                <canvas id="background-visualizer" class="background-visualizer"></canvas>
+                
+                <!-- Playlist View -->
+                <div id="playlist-view" class="playlist-view">
+                    <div class="playlist-header">
+                        <h2 id="current-playlist-name">Select a playlist</h2>
+                        <div class="current-track-info">
+                            <div class="track-title" id="current-track-title">No track selected</div>
+                            <div class="track-artist" id="current-track-artist"></div>
+                        </div>
+                    </div>
+                    
+                    <div id="tracks-container" class="tracks-container">
+                        <div id="tracks-list" class="tracks-list">
+                            <div class="drop-zone" id="drop-zone">
+                                <p>Drop audio files here or click to select</p>
+                            </div>
+                            <!-- Tracks will be populated here -->
+                        </div>
+                    </div>
+                </div>
+            </main>
+        </div>
+
+        <!-- Audio Player -->
+        <div class="audio-player">
+
+            <div class="player-controls">
+                <button id="prev-btn" class="btn btn-icon btn-secondary player-control"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-skip-back icon-white"><polygon points="19 20 9 12 19 4 19 20"></polygon><line x1="5" y1="19" x2="5" y2="5"></line></svg></button>
+                <button id="play-pause-btn" class="btn btn-icon btn-secondary player-control"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-play icon-white"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg></button>
+                <button id="next-btn" class="btn btn-icon btn-secondary player-control"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-skip-forward icon-white"><polygon points="5 4 15 12 5 20 5 4"></polygon><line x1="19" y1="5" x2="19" y2="19"></line></svg></button>
+                <button id="repeat-btn" class="btn btn-icon btn-secondary player-control"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-repeat icon-white"><polyline points="17 1 21 5 17 9"></polyline><path d="M3 11V9a4 4 0 0 1 4-4h14"></path><polyline points="7 23 3 19 7 15"></polyline><path d="M21 13v2a4 4 0 0 1-4 4H3"></path></svg></button>
+            
+
+
+            </div>
+
+
+            
+            <div class="player-progress">
+                <span id="current-time">0:00</span>
+                <div class="progress-container">
+                    <input type="range" id="progress-slider" class="slider" min="0" max="100" value="0">
+                </div>
+                <span id="total-time">0:00</span>
+            </div>
+
+            <div class="player-volume">
+                <button id="volume-btn" class="btn btn-icon btn-secondary player-control"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-volume-2 icon-white"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path></svg></button>
+                <input type="range" id="volume-slider" class="slider volume-slider" min="0" max="200" value="100">
+            </div>
+
+
+
+
+        </div>
+
+        <!-- Visualizer -->
+        <div class="visualizer-container">
+            <canvas id="visualizer" width="800" height="200"></canvas>
+        </div>
+
+        <!-- Modals -->
+        <!-- Theme Modal -->
+        <div id="theme-modal" class="modal hidden">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3>Theme Settings</h3>
+                    <button class="modal-close">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <div class="theme-controls">
+                        <div class="color-control">
+                            <label>Primary Color:</label>
+                            <input type="color" id="secondary-color" value="#8b5cf6">
+                        </div>
+                        <div class="color-control">
+                            <label>Secondary Color:</label>
+                            <input type="color" id="primary-color" value="#6366f1">
+                        </div>
+                        <div class="color-control">
+                            <label>Text & Icon Color:</label>
+                            <input type="color" id="text-icon-color" value="#ffffff">
+                        </div>
+                        <div class="color-control">
+                            <label>Visualizer Color:</label>
+                            <input type="color" id="visualizer-color" value="#10b981">
+                        </div>
+                    </div>
+                    <div class="modal-actions">
+                        <button id="save-theme-btn" class="btn btn-secondary">Save Theme</button>
+                        <button id="reset-theme-btn" class="btn btn-secondary">Reset to Default</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Settings Modal -->
+        <div id="settings-modal" class="modal hidden">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3>Settings</h3>
+                    <button class="modal-close">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <div class="settings-grid">
+                        <div class="checkbox-control">
+                            <label>
+                                <input type="checkbox" id="visualizer-enabled" data-config-path="visualizer.enabled" data-default-value="true"> Enable Visualizer
+                            </label>
+                        </div>
+                        <div class="checkbox-control">
+                            <label>
+                                <input type="checkbox" id="save-repeat-state" data-config-path="playbackState.saveRepeatState" data-default-value="true"> Save Repeat Button State
+                            </label>
+                        </div>
+                        <div class="checkbox-control">
+                            <label>
+                                <input type="checkbox" id="save-track-time" data-config-path="playbackState.saveTrackTime" data-default-value="true"> Save Track Time Position
+                            </label>
+                        </div>
+                        <div class="version-info">
+                            <label>Version: <span id="app-version">Loading...</span></label>
+                        </div>
+                        <div class="export-section">
+                            <button id="export-songs-btn" class="btn btn-secondary">Export All Songs</button>
+                        </div>
+                        <div class="cookies-section">
+                            <button id="upload-cookies-btn" class="btn btn-secondary">Select cookies.txt...</button>
+                                <span id="cookies-status" class="status-indicator" style="margin-left:8px;">Checking...</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Backup Modal -->
+        <div id="backup-modal" class="modal hidden">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3>Backup & Restore</h3>
+                    <button class="modal-close">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <div class="backup-section">
+                        <h4>Create Backup</h4>
+                        <button id="create-backup-btn" class="btn btn-secondary">Create New Backup</button>
+                    </div>
+
+                    <div class="backup-section">
+                        <h4>Existing Backups</h4>
+                        <div id="backups-list" class="backups-list">
+                            <!-- Backups will be populated here -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Playlist Name Modal -->
+        <div id="playlist-name-modal" class="modal hidden">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3 id="playlist-modal-title">Create Playlist</h3>
+                    <button class="modal-close">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <input type="text" id="playlist-name-input" placeholder="Playlist name" class="input">
+                    <div class="modal-actions">
+                        <button id="save-playlist-name-btn" class="btn btn-secondary">Save</button>
+                        <button id="cancel-playlist-name-btn" class="btn btn-secondary">Cancel</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Generic Confirm Modal -->
+        <div id="confirm-modal" class="modal hidden">
+          <div class="modal-content">
+            <div class="modal-header">
+              <h3 id="confirm-title">Confirm</h3>
+              <button class="modal-close">&times;</button>
+            </div>
+            <div class="modal-body">
+              <p id="confirm-message">Are you sure?</p>
+              <div class="modal-actions">
+                <button id="confirm-yes-btn" class="btn btn-secondary">Yes</button>
+                <button id="confirm-no-btn" class="btn btn-secondary">No</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Track Rename Modal -->
+        <div id="track-rename-modal" class="modal hidden">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3>Rename Track</h3>
+                    <button class="modal-close">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <input type="text" id="track-name-input" placeholder="Track name" class="input">
+                    <div class="modal-actions">
+                        <button id="save-track-name-btn" class="btn btn-secondary">Save</button>
+                        <button id="cancel-track-name-btn" class="btn btn-secondary">Cancel</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+
+  <script src="renderer.js"></script>
+</body>
+</html>

@@ -1,0 +1,1615 @@
+/* CSS Custom Properties for Theme */
+:root {
+  /* Core theme colors are set dynamically from renderer.js */
+  --primary-color: #8b5cf6;
+  --secondary-color: #374151;
+  --visualizer-color: #10b981;
+  --danger-color: #ef4444;
+  --slider-handle-color: var(--primary-color);
+
+  /* Fallback values for dynamically generated colors */
+  --container-color: #4b5563;
+  --surface-color: #4b5563;
+  --border-color: #6b7280;
+  --hover-color: #a78bfa;
+  --secondary-hover: #4b5563;
+  --theme-text-color: #ffffff;
+  --theme-text-shadow: none;
+  --theme-icon-color: #ffffff;
+  --slider-handle-border: #4b5563;
+  --placeholder-color: #9ca3af;
+}
+
+/* Base Styles */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: var(--secondary-color);
+  color: var(--adaptive-text-color);
+  height: 100vh;
+  overflow: hidden;
+}
+
+
+
+
+/* Ensure text elements follow theme colors */
+h3, h4, p {
+  color: var(--theme-text-color, #ffffff) !important;
+}
+
+/* Ensure input elements also use theme colors */
+input, textarea, select {
+  color: var(--theme-text-color, #ffffff) !important;
+}
+
+/* Ensure buttons follow theme text color */
+.btn {
+  color: var(--theme-text-color, #ffffff) !important;
+}
+
+
+svg[fill]:not([fill="none"]):not([fill="currentColor"]):not(#kofi-btn svg) {
+  fill: var(--theme-icon-color, #ffffff) !important;
+}
+
+
+
+/* Ensure SVG images can be themed (banner, logo, etc.) */
+.banner-image,
+img[src$=".svg"] {
+  transition: filter 0.3s ease;
+}
+
+#app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  position: relative;
+}
+
+/* Loading Overlay */
+.loading-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.8);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 10000;
+}
+
+.loading-overlay.hidden {
+  display: none;
+}
+
+
+.loading-spinner {
+  text-align: center;
+  color: var(--text-color);
+}
+
+.spinner {
+  width: 50px;
+  height: 50px;
+  border: 4px solid var(--border-color);
+  border-top: 4px solid var(--primary-color);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+  margin: 0 auto 20px;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+.hidden {
+  display: none !important;
+}
+
+/* Header */
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1rem;
+  background-color: var(--surface-color);
+  border-bottom: 2px solid var(--border-color);
+  -webkit-app-region: drag; /* Make the header draggable */
+  min-height: 60px; /* Ensure consistent header height */
+}
+
+.header-left {
+  flex: 0 0 auto; /* Only take space needed for logo */
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  -webkit-app-region: no-drag;
+  height: 40px; /* Consistent height for all sections */
+}
+
+.banner-image {
+  height: 40px;
+  width: auto;
+  filter: drop-shadow(2px 2px 4px rgba(0, 0, 0, 0.3));
+  user-select: none;
+}
+
+.header h1 {
+  font-size: 1.5rem;
+  font-weight: 600;
+  color: var(--adaptive-text-color);
+}
+
+/* Download controls specifically within the header */
+.header .download-controls {
+    flex: 1; /* Take remaining space */
+    display: flex;
+    justify-content: flex-start; /* Align to start instead of centering */
+    align-items: center;
+    gap: 0.5rem;
+    -webkit-app-region: no-drag;
+    height: 40px; /* Consistent height for all sections */
+    margin-left: 0.25rem; /* Minimal gap */
+    margin-right: 0.25rem; /* Small gap before right buttons */
+}
+
+.header .download-controls .input {
+    flex: 1; /* Take up all available space */
+    min-width: 200px; /* Prevent it from becoming too small */
+    max-width: none; /* Allow it to grow as much as needed */
+    width: 0; /* Reset width to let flex handle sizing */
+    font-size: 0.9rem;
+    height: 36px; /* Consistent input height */
+}
+
+.header .download-controls .btn {
+    height: 36px; /* Consistent button height */
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.header-right {
+  flex: 0 0 auto; /* Only take space needed for buttons */
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 0.5rem;
+  -webkit-app-region: no-drag;
+  height: 40px; /* Consistent height for all sections */
+}
+
+/* Support buttons styling */
+.btn-support {
+  background: linear-gradient(135deg, #ff6b6b, #ee5a24);
+  border: none;
+  color: white;
+  transition: all 0.3s ease;
+}
+
+.btn-support:hover {
+  background: linear-gradient(135deg, #ee5a24, #ff6b6b);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(255, 107, 107, 0.4);
+}
+
+/* Ko-fi button with image */
+.btn-kofi {
+  background: transparent;
+  border: none;
+  padding: 0;
+  margin: 0;
+  transition: all 0.3s ease;
+  border-radius: 0;
+  overflow: visible;
+  outline: none;
+  width: fit-content;
+  height: fit-content;
+}
+
+.btn-kofi:hover {
+  transform: translateY(-2px);
+  filter: drop-shadow(0 4px 8px rgba(255, 95, 95, 0.3));
+}
+
+.btn-kofi:focus {
+  outline: none;
+}
+
+.kofi-image {
+  height: 36px;
+  width: auto;
+  display: block;
+  transition: all 0.3s ease;
+  border-radius: 0;
+}
+
+.btn-kofi:hover .kofi-image {
+  transform: scale(1.02);
+}
+
+
+
+/* Main Content */
+.main-content {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
+
+/* Sidebar */
+.sidebar {
+  width: 300px;
+  background: var(--surface-color);
+  border-right: 2px solid var(--border-color);
+  padding: 1rem;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.sidebar-section {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 2rem;
+}
+
+.sidebar-section h3 {
+  font-size: 1.1rem;
+  font-weight: 600;
+  margin-bottom: 1rem;
+  color: var(--adaptive-text-color, white);
+  user-select: none;
+}
+
+.playlist-controls {
+  margin-bottom: 1rem;
+}
+
+.playlists-list {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0; /* Allow flex item to shrink below content size */
+  .status-indicator {
+    font-size: 0.85rem;
+  }
+  .status-ok {
+    color: #28a745;
+  }
+  .status-missing {
+    color: #dc3545;
+  }
+}
+
+.playlist-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.75rem;
+  margin-bottom: 0.5rem;
+  background: color-mix(in srgb, var(--secondary-color) 75%, transparent);
+  border: 2px solid color-mix(in srgb, var(--border-color) 75%, transparent);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  color: white;
+}
+
+.playlist-item:hover {
+  background: color-mix(in srgb, var(--hover-color) 75%, transparent);
+  border-color: color-mix(in srgb, var(--hover-color) 75%, transparent);
+  transform: translateY(-1px);
+}
+
+.playlist-item.active {
+  background: color-mix(in srgb, var(--primary-color) 75%, transparent);
+  border-color: color-mix(in srgb, var(--primary-color) 75%, transparent);
+}
+
+.playlist-name {
+  font-weight: 500;
+  flex: 1;
+  user-select: none;
+}
+
+.playlist-track-count {
+  font-size: 0.875rem;
+  color: var(--theme-text-color, #ffffff) !important;
+  opacity: 0.7;
+}
+
+
+
+/* Main Content Container */
+.main-content {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
+
+/* Content Area */
+.content {
+  flex: 1;
+  padding: 1rem;
+  overflow-y: auto;
+  position: relative;
+}
+
+.playlist-view {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  z-index: 1;
+}
+
+.playlist-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.playlist-header h2 {
+  font-size: 1.5rem;
+  font-weight: 600;
+  user-select: none; 
+}
+
+.current-track-info {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  text-align: right;
+  min-width: 0;
+}
+
+.current-track-info .track-title {
+  font-size: 1rem;
+  font-weight: 500;
+  color: var(--theme-text-color);
+  white-space: normal;
+  word-wrap: break-word;
+  line-height: 1.2;
+}
+
+.current-track-info .track-artist {
+  font-size: 0.875rem;
+  color: var(--theme-text-color);
+  opacity: 0.7;
+  white-space: normal;
+  word-wrap: break-word;
+  line-height: 1.2;
+}
+
+.playlist-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.tracks-container {
+  flex: 1;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto; /* Allow scrolling for the track list */
+}
+
+.drop-zone {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  border: 2px dashed var(--border-color);
+  border-radius: 8px;
+  background: var(--container-color);
+  margin-bottom: 0.5rem;
+  text-align: center;
+  font-size: 1rem;
+  color: var(--text-color-muted);
+  user-select: none; /* Make text non-selectable */
+  -webkit-user-select: none; /* For Safari */
+  -moz-user-select: none; /* For Firefox */
+  -ms-user-select: none; /* For Internet Explorer/Edge */
+  min-height: 60px; /* Match track item height */
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.drop-zone:hover {
+  border-color: var(--primary-color);
+  background: rgba(99, 102, 241, 0.05);
+}
+
+.drop-zone.drag-over {
+  border-color: var(--primary-color);
+  background: rgba(99, 102, 241, 0.1);
+}
+
+.drop-zone p {
+  font-size: 1.1rem;
+  color: var(--adaptive-text-color, white);
+  opacity: 0.7;
+}
+
+.tracks-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.track-item {
+  display: flex;
+  align-items: center;
+  background: color-mix(in srgb, var(--secondary-color) 75%, transparent);
+  border: 2px solid color-mix(in srgb, var(--border-color) 75%, transparent);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  position: relative;
+  color: white;
+}
+
+.track-item:hover {
+  background: color-mix(in srgb, var(--hover-color) 75%, transparent);
+  border-color: color-mix(in srgb, var(--hover-color) 75%, transparent);
+  transform: translateY(-1px);
+}
+
+/* Align buttons in settings modal to the left */
+.settings-grid .export-section,
+.settings-grid .cookies-section {
+  text-align: left;
+}
+.settings-grid .export-section button,
+.settings-grid .cookies-section button {
+  margin-left: 0;
+  margin-right: 0;
+}
+
+/* Hover and Playing States */
+.track-item:hover:not(.playing) {
+  background: color-mix(in srgb, var(--hover-color) 75%, transparent);
+  border-color: color-mix(in srgb, var(--hover-color) 75%, transparent);
+}
+
+.track-item.playing {
+  background: color-mix(in srgb, var(--primary-color) 75%, transparent);
+  border-color: color-mix(in srgb, var(--primary-color) 75%, transparent);
+}
+
+
+
+.track-item.dragging {
+  opacity: 0.5;
+  /* Removed tilt effect */
+  transform: translateY(-2px);
+}
+
+.drag-handle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 12px;
+  cursor: grab;
+  color: var(--text-color-muted);
+  align-self: stretch; /* Make handle fill the height of the track item */
+}
+
+.drag-handle:hover {
+  background-color: rgba(255, 255, 255, 0.1);
+  color: var(--text-color);
+}
+
+.track-info {
+  flex-grow: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-width: 0; /* Prevents flex items from overflowing */
+  padding: 1rem;
+}
+
+.track-title {
+  flex: 0;
+  font-size: 1rem;
+  font-weight: 500;
+  color: var(--theme-text-color, #ffffff);
+  margin: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+  text-shadow: var(--theme-text-shadow, none);
+}
+
+.track-name {
+  font-weight: 500;
+  font-size: 1rem;
+  user-select: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+  color: var(--theme-text-color, #ffffff);
+}
+
+.playlist-name {
+  color: var(--theme-text-color, #ffffff);
+}
+
+.track-details {
+  display: flex;
+  gap: 1rem;
+  font-size: 0.875rem;
+  opacity: 0.7;
+  user-select: none;
+}
+
+/* Make playlist track count and duration non-selectable */
+.playlist-track-count {
+  user-select: none;
+}
+
+/* Make player time elements non-selectable */
+#current-time,
+#total-time {
+  user-select: none;
+}
+
+.track-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding-right: 1rem;
+  opacity: 1;
+  transition: opacity 0.2s ease-in-out;
+}
+
+
+
+.track-volume-control {
+  display: flex;
+  align-items: center;
+  opacity: 1; /* Always visible */
+  width: 100px; /* Increased width to accommodate icon */
+  transition: all 0.2s ease-in-out;
+  overflow: hidden;
+  padding-left: 16px; /* Add padding to make space for the thumb */
+  margin-left: -16px; /* Compensate for the padding to maintain layout */
+  margin-right: 0.5rem;
+  gap: 4px; /* Space between icon and slider */
+}
+
+.track-volume-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  opacity: 0.7;
+  transition: opacity 0.2s ease;
+}
+
+.track-volume-icon:hover {
+  opacity: 1;
+}
+
+
+
+/* Generic Slider Styles */
+input[type=range] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  background: transparent;
+  cursor: pointer;
+  height: 16px; /* Ensure consistent height */
+}
+
+/* Webkit Track */
+input[type=range]::-webkit-slider-runnable-track {
+  width: 100%;
+  height: 6px;
+  background: var(--secondary-color);
+  border: 1px solid var(--border-color);
+  border-radius: 3px;
+}
+
+/* Firefox Track */
+input[type=range]::-moz-range-track {
+  width: 100%;
+  height: 6px;
+  background: var(--secondary-color);
+  border: 1px solid var(--border-color);
+  border-radius: 3px;
+}
+
+/* Webkit Thumb */
+input[type=range]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  margin-top: -6px; /* Center thumb on track */
+  width: 16px;
+  height: 16px;
+  background: var(--border-color);
+  border: 2px solid var(--secondary-color);
+  border-radius: 50%;
+  transition: all 0.2s ease;
+}
+
+/* Firefox Thumb */
+input[type=range]::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  background: var(--border-color);
+  border: 2px solid var(--secondary-color);
+  border-radius: 50%;
+  transition: all 0.2s ease;
+}
+
+/* Hover/Active States */
+input[type=range]:hover::-webkit-slider-thumb,
+input[type=range]:hover::-moz-range-thumb {
+  background: var(--slider-handle-color);
+  border-color: var(--slider-handle-color);
+  transform: scale(1.1);
+}
+
+input[type=range]:active::-webkit-slider-thumb,
+input[type=range]:active::-moz-range-thumb {
+  background: var(--slider-handle-color);
+  border-color: var(--slider-handle-color);
+  transform: scale(1.1);
+}
+
+.track-volume {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-right: 1rem;
+}
+
+.track-volume input {
+  width: 80px;
+}
+
+/* Audio Player */
+.audio-player {
+  background: var(--surface-color);
+  border-top: 2px solid var(--border-color);
+  padding: 1rem 2rem;
+  display: flex;
+  align-items: center;
+  gap: 2rem;
+  position: relative;
+  z-index: 1;
+}
+
+.player-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.track-title {
+  font-weight: 600;
+  font-size: 1rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.track-artist {
+  font-size: 0.875rem;
+  opacity: 0.7;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+
+.player-btn {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  font-size: 1.2rem;
+}
+
+.play-btn {
+  width: 50px;
+  height: 50px;
+  font-size: 1.5rem;
+  background: transparent;
+  border: 1px solid var(--primary-color);
+}
+
+.play-btn:hover {
+  background: var(--hover-color);
+}
+
+
+.progress-container {
+  flex: 1;
+}
+
+.player-volume {
+  flex: 4;
+  display: flex;
+
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.volume-slider {
+  width: 100px;
+}
+
+/* Visualizer */
+.visualizer-container {
+  display: none; /* Hide the main visualizer - we only want the background one */
+}
+
+#visualizer {
+  width: 100%;
+  height: 100%;
+}
+
+/* Background Visualizer */
+.background-visualizer {
+  position: fixed;
+  top: 70px; /* Account for header height */
+  left: 300px; /* Account for sidebar width */
+  right: 0;
+  bottom: 0; /* Extend all the way to bottom, behind audio player */
+  pointer-events: none;
+  z-index: 0;
+  opacity: 0.6;
+}
+
+/* Form Elements */
+.btn {
+  padding: 0.5rem 1rem;
+  border: none;
+  border-radius: 6px;
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+}
+
+.btn:hover {
+  transform: translateY(-1px);
+}
+
+.btn:active {
+  transform: translateY(0);
+}
+
+.btn-secondary {
+  background-color: transparent;
+  border: 1px solid var(--secondary-color);
+}
+
+.btn-secondary:hover {
+  background-color: var(--primary-color);
+}
+
+
+
+.btn-small {
+  padding: 0.25rem 0.5rem;
+  font-size: 0.75rem;
+}
+
+.btn-icon {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border-radius: 50%;
+  background: transparent;
+  border: none;
+}
+
+.btn-icon:hover {
+  background: transparent;
+}
+
+.input {
+  padding: 0.75rem;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--background-color);
+  font-size: 0.875rem;
+  width: 100%;
+}
+
+.input:focus {
+  outline: none;
+  border-color: var(--primary-color);
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+}
+
+/* Placeholder text styling */
+.input::placeholder {
+  color: var(--theme-text-color, #ffffff) !important;
+  text-shadow: none !important;
+  opacity: 0.7;
+}
+
+.input::-webkit-input-placeholder {
+  color: var(--theme-text-color, #ffffff) !important;
+  text-shadow: none !important;
+  opacity: 0.7;
+}
+
+.input::-moz-placeholder {
+  color: var(--theme-text-color, #ffffff) !important;
+  text-shadow: none !important;
+  opacity: 0.7;
+}
+
+.input:-ms-input-placeholder {
+  color: var(--theme-text-color, #ffffff) !important;
+  text-shadow: none !important;
+  opacity: 0.7;
+}
+
+/* Unified Slider Styles */
+/* Unified Slider Styles */
+.slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 4px; /* Make the track thinner */
+  background: transparent;
+  outline: none;
+  transition: all 0.2s ease;
+  border-radius: 2px;
+  position: relative;
+  margin: 10px 0; /* Add margin to give thumb space */
+}
+
+/* Slider Track */
+.slider::-webkit-slider-runnable-track {
+  width: 100%;
+  height: 100%;
+  cursor: pointer;
+  background: rgba(255, 255, 255, 0.25);
+  border-radius: 2px;
+}
+
+/* Slider Thumb */
+.slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  background: var(--slider-handle-color);
+  cursor: pointer;
+  border-radius: 50%;
+  border: 2px solid var(--slider-handle-border);
+  transition: all 0.2s ease;
+  margin-top: -6px; /* (track_height - thumb_height) / 2 */
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+/* Hover and Active States */
+.slider:hover::-webkit-slider-thumb,
+.slider:focus::-webkit-slider-thumb {
+  background: var(--hover-color);
+  border-color: var(--slider-handle-border);
+  transform: scale(1.2);
+  box-shadow: 0 3px 6px rgba(0, 0, 0, 0.3);
+}
+
+/* Specific slider instances */
+.volume-slider {
+  width: 100px;
+}
+
+.track-volume-slider {
+  width: 80px;
+}
+
+/* Modals */
+#confirm-modal {
+  z-index: 2000; /* ensure confirm dialog overlays others */
+}
+.modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 1000;
+}
+
+.modal-content {
+  background: var(--surface-color);
+  border-radius: 12px;
+  width: 90%;
+  max-width: 500px;
+  max-height: 80vh;
+  overflow-y: auto;
+  border: 1px solid var(--border-color);
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1rem 1.5rem;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.modal-header h3 {
+  font-size: 1.25rem;
+  font-weight: 600;
+  user-select: none; 
+  user-select: none; 
+}
+
+.modal-close {
+  background: none;
+  border: none;
+  font-size: 1.5rem;
+  cursor: pointer;
+  color: var(--text-color);
+  padding: 0;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+}
+
+.modal-close:hover {
+  background: var(--hover-color);
+  color: white;
+}
+
+.modal-body {
+  padding: 1.5rem;
+}
+
+.modal-actions {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: flex-end;
+  margin-top: 1.5rem;
+}
+
+.theme-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.color-control {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.color-control label {
+  font-weight: 500;
+  user-select: none; 
+
+}
+
+.color-control input[type="color"] {
+  width: 50px;
+  height: 30px;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.backup-section {
+  margin-bottom: 2rem;
+}
+
+.backup-section h4 {
+  font-size: 1.1rem;
+  font-weight: 600;
+  margin-bottom: 1rem;
+  user-select: none; 
+}
+
+.backups-list {
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.backup-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.75rem;
+  margin-bottom: 0.5rem;
+  background: var(--background-color);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+}
+
+.backup-info {
+  flex: 1;
+}
+
+.backup-name {
+  font-weight: 500;
+  margin-bottom: 0.25rem;
+}
+
+.backup-date {
+  font-size: 0.875rem;
+  opacity: 0.7;
+}
+
+.backup-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+/* Settings Modal Styles */
+.settings-section {
+  margin-bottom: 2rem;
+}
+
+.settings-section h4 {
+  font-size: 1.1rem;
+  font-weight: 600;
+  margin-bottom: 1rem;
+  color: var(--theme-text-color);
+  user-select: none; 
+}
+
+
+
+.checkbox-control {
+  display: flex;
+  align-items: center;
+}
+
+.checkbox-control label {
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  font-weight: 500;
+  user-select: none; 
+}
+
+.checkbox-control input[type="checkbox"] {
+  margin-right: 0.5rem;
+  width: 18px;
+  height: 18px;
+  cursor: pointer;
+}
+
+.version-info {
+  display: flex;
+  align-items: center;
+}
+
+.version-info label {
+  font-weight: 500;
+  color: var(--theme-text-color);
+  user-select: none;
+}
+
+#app-version {
+  font-weight: 400;
+  color: var(--theme-text-color);
+  opacity: 0.8;
+}
+
+.input-control {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.input-control label {
+  font-weight: 500;
+  color: var(--theme-text-color);
+  user-select: none; 
+
+}
+
+.input-control small {
+  color: var(--theme-text-color);
+  opacity: 0.7;
+  font-size: 0.875rem;
+}
+
+/* Scrollbar Styling */
+::-webkit-scrollbar {
+  width: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--background-color);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-color);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--primary-color);
+}
+
+/* Slider Styles */
+input[type="range"] {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 100%;
+  height: 4px;
+  background: var(--border-color);
+  border-radius: 2px;
+  outline: none;
+}
+
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--slider-handle-color);
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+input[type="range"]::-webkit-slider-thumb:hover {
+  background: var(--primary-color);
+}
+
+input[type="range"]::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--slider-handle-color);
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+input[type="range"]::-moz-range-thumb:hover {
+  background: var(--primary-color);
+}
+
+/* Audio Player Styles */
+.audio-player {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 1rem;
+  background: var(--surface-color);
+  border-top: 2px solid var(--border-color);
+  min-height: 80px;
+}
+
+.player-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.player-info .track-info {
+  padding: 0;
+}
+
+.track-title {
+  font-weight: 600;
+  font-size: 1rem;
+  color: var(--theme-text-color);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.track-artist {
+  font-size: 0.875rem;
+  color: var(--theme-text-color);
+  opacity: 0.7;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.player-controls {
+  flex: 2;
+  display: flex;
+  align-items: center;
+  width: 100%;
+  padding: 0 1rem;
+  box-sizing: border-box;
+}
+
+.player-control {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.player-progress {
+  flex: 3;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 200px;
+}
+
+
+#current-time,
+#total-time {
+  font-size: 0.75rem;
+  color: var(--theme-text-color);
+  opacity: 0.7;
+  min-width: 35px;
+  text-align: center;
+}
+
+
+/* Phone Aspect Ratio Layout */
+@media (max-aspect-ratio: 1/1) {
+  /* Ensure all track info elements are visible */
+  div[id="current-track-title"],
+  div[id="current-track-artist"] {
+    display: block !important;
+    visibility: visible !important;
+  }
+  /* Hide sidebar completely */
+  .sidebar {
+    display: none !important;
+  }
+  
+  /* Hide most header elements except banner logo */
+  .download-controls {
+    display: none !important;
+  }
+  
+  .header-right {
+    display: none !important;
+  }
+  
+  /* Adjust main content to take full width */
+  .main-content {
+    margin-left: 0;
+  }
+  
+  .content {
+    margin-left: 0;
+  }
+  
+  /* Adjust header for phone layout */
+  .header {
+    padding: 0.5rem 1rem;
+    min-height: 50px;
+  }
+  
+  .header-left {
+    flex: 1;
+    justify-content: center;
+  }
+  
+  .banner-image {
+    height: 30px;
+  }
+  
+  /* Reorganize audio player for phone - fewer rows */
+  .audio-player {
+    flex-direction: column !important;
+    padding: 0.75rem;
+    gap: 0.75rem;
+    min-height: auto;
+  }
+  
+  /* Adjust playlist header for phone layout */
+  .playlist-header {
+    flex-direction: column;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  
+  /* Hide playlist name and current track info container in phone mode */
+  #current-playlist-name {
+    display: none !important;
+  }
+  
+  .current-track-info {
+    display: none !important;
+  }
+  
+  /* Show track title in place of playlist name */
+  .playlist-header::before {
+    content: attr(data-track-title);
+    font-size: 1.2rem;
+    font-weight: 600;
+    color: var(--theme-text-color);
+    text-align: center;
+    display: block;
+  }
+  
+  .playlist-header::after {
+    content: attr(data-track-artist);
+    font-size: 1rem;
+    color: var(--theme-text-color);
+    opacity: 0.7;
+    text-align: center;
+    display: block;
+  }
+  
+  .current-track-info .track-title,
+  .current-track-info .track-artist {
+    display: block !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+  }
+  
+  #current-track-title {
+    display: block !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+  }
+  
+  #current-track-artist {
+    display: block !important;
+    visibility: visible !important;
+    opacity: 0.7 !important;
+  }
+  
+  /* Force track title visibility in phone mode */
+  .current-track-info #current-track-title {
+    display: block !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+    color: var(--theme-text-color) !important;
+    font-size: 1rem !important;
+    font-weight: 500 !important;
+    margin-bottom: 0.25rem !important;
+  }
+  
+  .current-track-info #current-track-artist {
+    display: block !important;
+    visibility: visible !important;
+    opacity: 0.7 !important;
+    color: var(--theme-text-color) !important;
+    font-size: 0.875rem !important;
+  }
+  
+  /* Track info takes full width on mobile - no restrictions needed */
+  
+  /* Center and expand audio player elements */
+  .player-controls {
+    justify-content: center;
+    width: 100%;
+    padding: 0;
+  }
+  
+  .player-progress {
+    width: 100%;
+    justify-content: center;
+    min-width: auto;
+  }
+  
+  .progress-container {
+    flex: 1;
+    max-width: 90%;
+  }
+  
+  .player-volume {
+    width: 100%;
+    justify-content: center;
+    max-width: 80%;
+    margin: 0 auto;
+  }
+  
+  .volume-slider {
+    width: 100%;
+    min-width: 200px;
+  }
+  
+  /* Adjust background visualizer */
+  .background-visualizer {
+    left: 0;
+  }
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+  .sidebar {
+    width: 250px;
+  }
+  
+  .audio-player {
+    flex-direction: column;
+    gap: 1rem;
+    padding: 1rem;
+  }
+  
+}
+
+/* Drag and Drop Animations */
+.track-item.drag-over {
+  border-color: var(--primary-color);
+  background: rgba(99, 102, 241, 0.1);
+}
+
+.playlist-item.drag-over {
+  border-color: var(--primary-color);
+  background: rgba(99, 102, 241, 0.1);
+}
+
+/* Animations */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.track-item {
+  animation: fadeIn 0.3s ease;
+}
+
+.loading-spinner {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  text-align: center;
+  color: var(--theme-text-color);
+}
+
+.spinner {
+  width: 50px;
+  height: 50px;
+  border: 4px solid var(--border-color);
+  border-top: 4px solid var(--primary-color);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+  margin: 0 auto 1rem;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+.loading-spinner p {
+  font-size: 1.1rem;
+  margin: 0;
+  color: var(--theme-text-color);
+  text-shadow: var(--theme-text-shadow);
+}
+
+/* Button Disabled States */
+button:disabled,
+.btn:disabled {
+  opacity: 0.5 !important;
+  cursor: not-allowed !important;
+  pointer-events: none !important;
+  background-color: #6b7280 !important;
+  color: #9ca3af !important;
+  text-shadow: none !important;
+  border-color: #4b5563 !important;
+}
+
+button:disabled:hover,
+.btn:disabled:hover {
+  background-color: #6b7280 !important;
+  color: #9ca3af !important;
+  transform: none !important;
+  box-shadow: none !important;
+}
+
+/* Specific styling for download button when disabled */
+#download-btn:disabled {
+  background-color: #4b5563 !important;
+  color: #6b7280 !important;
+  border-color: #374151 !important;
+  cursor: not-allowed !important;
+  opacity: 0.6 !important;
+  min-width: 160px !important;
+  white-space: nowrap !important;
+  font-size: 0.85rem !important;
+}
+
+#download-btn:disabled:hover {
+  background-color: #4b5563 !important;
+  color: #6b7280 !important;
+  transform: none !important;
+}
+
+/* Download button normal state */
+#download-btn {
+  min-width: 100px;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+
+/* Backup item and label text colors */
+.backup-item {
+  color: var(--theme-text-color, #ffffff);
+}
+
+.backup-name {
+  color: var(--theme-text-color, #ffffff);
+}
+
+.backup-date {
+  color: var(--theme-text-color, #ffffff);
+}
+
+.modal-close {
+  color: var(--theme-text-color, #ffffff);
+}
+
+.track-type {
+  color: var(--theme-text-color, #ffffff);
+}
+
+.track-duration {
+  color: var(--theme-text-color, #ffffff);
+}
+
+label {
+  color: var(--theme-text-color, #ffffff);
+}
+
+/* Settings Grid Layout */
+.settings-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1rem;
+  padding: 1rem 0;
+}
+
+.settings-grid .checkbox-control,
+.settings-grid .version-info,
+.settings-grid .export-section {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  padding: 0.5rem 0;
+}
+
+.settings-grid .checkbox-control label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+
+.settings-grid .checkbox-control input[type="checkbox"] {
+  margin: 0;
+  cursor: pointer;
+}
+
+.settings-grid .version-info {
+  font-size: 0.85rem;
+  opacity: 0.8;
+}
