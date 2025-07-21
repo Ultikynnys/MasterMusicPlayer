@@ -88,16 +88,7 @@ const frontendLogger = new FrontendLogger();
 // Performance diagnostics - renderer process
 // ---------------------------------------------------------------------------
 // Periodically log CPU usage of renderer process
-if (typeof process.getCPUUsage === 'function') {
-  setInterval(() => {
-    try {
-      const cpu = process.getCPUUsage();
-      frontendLogger.performance('renderer-cpu', cpu.percentCPUUsage.toFixed(2), cpu);
-    } catch (err) {
-      console.warn('[PERF] Failed to capture renderer CPU usage', err);
-    }
-  }, 5000);
-}
+// Periodic renderer CPU logging removed to improve performance
 
 // Log long tasks (>50ms) that can block the main thread
 if (typeof PerformanceObserver !== 'undefined' && PerformanceObserver.supportedEntryTypes?.includes('longtask')) {
@@ -2288,7 +2279,8 @@ function handleTrackReorder(e) {
 
     // After reordering, find the new index of the currently playing track
     if (currentTrack) {
-      currentTrackIndex = currentPlaylist.tracks.findIndex(t => t.id === currentTrack.id);
+      // Use optional chaining to safely access id in case of undefined blanks
+      currentTrackIndex = currentPlaylist.tracks.findIndex(t => t?.id === currentTrack.id);
     }
   }
   
@@ -3057,6 +3049,8 @@ ipcRenderer.on('stop-playback', () => {
     isPlaying = false;
     resetPlayerUI();
     frontendLogger.info('Playback stopped by main process');
+    // Notify main process that playback has been fully stopped
+    ipcRenderer.send('playback-stopped');
   } catch (err) {
     console.warn('Failed to stop playback', err);
   }

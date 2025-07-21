@@ -1487,6 +1487,23 @@ withErrorHandling('get-cookies-status', async () => {
   return { exists, valid };
 });
 
+// Utility: robustly clear directory with retries to avoid EBUSY locks
+async function clearDirectoryWithRetries(dirPath, retries = 3, delayMs = 500) {
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      await fs.emptyDir(dirPath);
+      return;
+    } catch (err) {
+      if (attempt === retries) {
+        throw err;
+      }
+      // Wait then retry (handles transient EBUSY / EPERM locks)
+      logger.warn(`Retrying to clear directory: ${dirPath}. Attempt ${attempt}/${retries}`, err);
+      await new Promise(res => setTimeout(res, delayMs));
+    }
+  }
+}
+
 // IPC handlers for backup/restore
 withErrorHandling('create-backup', () => {
   const startTime = Date.now();
@@ -1540,12 +1557,21 @@ withErrorHandling('restore-backup', async (event, backupFile) => {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('stop-playback');
       // Give renderer a moment to release file locks
-      await new Promise(res => setTimeout(res, 500));
+      // Ask renderer to stop playback and wait for confirmation (max 3s)
+      const playbackStopped = new Promise(res => {
+        const timeout = setTimeout(() => res(false), 3000);
+        ipcMain.once('playback-stopped', () => {
+          clearTimeout(timeout);
+          res(true);
+        });
+      });
+      mainWindow.webContents.send('stop-playback');
+      await playbackStopped;
     }
 
-    // Clear existing data
-    await fs.emptyDir(playlistsPath);
-    await fs.emptyDir(songsPath);
+    // Clear existing data with robust retry handling to avoid file-lock errors
+    await clearDirectoryWithRetries(playlistsPath);
+    await clearDirectoryWithRetries(songsPath);
 
     // Extract backup to the app data directory
     await extract(backupFile, { dir: appDataPath });
