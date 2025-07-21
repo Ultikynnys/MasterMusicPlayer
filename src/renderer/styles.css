@@ -27,6 +27,11 @@
   box-sizing: border-box;
 }
 
+/* Utility: No text selection */
+.no-select {
+  user-select: none;
+}
+
 body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   background: var(--secondary-color);
@@ -35,30 +40,14 @@ body {
   overflow: hidden;
 }
 
-
-
-
-/* Ensure text elements follow theme colors */
-h3, h4, p {
+/* Ensure all UI elements follow theme colors */
+:is(h3, h4, p, input, textarea, select, .btn) {
   color: var(--theme-text-color, #ffffff) !important;
 }
-
-/* Ensure input elements also use theme colors */
-input, textarea, select {
-  color: var(--theme-text-color, #ffffff) !important;
-}
-
-/* Ensure buttons follow theme text color */
-.btn {
-  color: var(--theme-text-color, #ffffff) !important;
-}
-
 
 svg[fill]:not([fill="none"]):not([fill="currentColor"]):not(#kofi-btn svg) {
   fill: var(--theme-icon-color, #ffffff) !important;
 }
-
-
 
 /* Ensure SVG images can be themed (banner, logo, etc.) */
 .banner-image,
@@ -91,7 +80,6 @@ img[src$=".svg"] {
   display: none;
 }
 
-
 .loading-spinner {
   text-align: center;
   color: var(--text-color);
@@ -103,13 +91,7 @@ img[src$=".svg"] {
   border: 4px solid var(--border-color);
   border-top: 4px solid var(--primary-color);
   border-radius: 50%;
-  animation: spin 1s linear infinite;
   margin: 0 auto 20px;
-}
-
-@keyframes spin {
-  0% { transform: rotate(0deg); }
-  100% { transform: rotate(360deg); }
 }
 
 .hidden {
@@ -141,7 +123,6 @@ img[src$=".svg"] {
   height: 40px;
   width: auto;
   filter: drop-shadow(2px 2px 4px rgba(0, 0, 0, 0.3));
-  user-select: none;
 }
 
 .header h1 {
@@ -152,31 +133,31 @@ img[src$=".svg"] {
 
 /* Download controls specifically within the header */
 .header .download-controls {
-    flex: 1; /* Take remaining space */
-    display: flex;
-    justify-content: flex-start; /* Align to start instead of centering */
-    align-items: center;
-    gap: 0.5rem;
-    -webkit-app-region: no-drag;
-    height: 40px; /* Consistent height for all sections */
-    margin-left: 0.25rem; /* Minimal gap */
-    margin-right: 0.25rem; /* Small gap before right buttons */
+  flex: 1; /* Take remaining space */
+  display: flex;
+  justify-content: flex-start; /* Align to start instead of centering */
+  align-items: center;
+  gap: 0.5rem;
+  -webkit-app-region: no-drag;
+  height: 40px; /* Consistent height for all sections */
+  margin-left: 0.25rem; /* Minimal gap */
+  margin-right: 0.25rem; /* Small gap before right buttons */
 }
 
 .header .download-controls .input {
-    flex: 1; /* Take up all available space */
-    min-width: 200px; /* Prevent it from becoming too small */
-    max-width: none; /* Allow it to grow as much as needed */
-    width: 0; /* Reset width to let flex handle sizing */
-    font-size: 0.9rem;
-    height: 36px; /* Consistent input height */
+  flex: 1; /* Take up all available space */
+  min-width: 200px; /* Prevent it from becoming too small */
+  max-width: none; /* Allow it to grow as much as needed */
+  width: 0; /* Reset width to let flex handle sizing */
+  font-size: 0.9rem;
+  height: 36px; /* Consistent input height */
 }
 
 .header .download-controls .btn {
-    height: 36px; /* Consistent button height */
-    display: flex;
-    align-items: center;
-    justify-content: center;
+  height: 36px; /* Consistent button height */
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .header-right {
@@ -238,8 +219,6 @@ img[src$=".svg"] {
   transform: scale(1.02);
 }
 
-
-
 /* Main Content */
 .main-content {
   display: flex;
@@ -252,8 +231,9 @@ img[src$=".svg"] {
   width: 300px;
   background: var(--surface-color);
   border-right: 2px solid var(--border-color);
-  padding: 1rem;
-  overflow-y: auto;
+  padding-left: 1rem;
+  padding-right: 1rem;
+  overflow-y: hidden;
   display: flex;
   flex-direction: column;
 }
@@ -262,7 +242,7 @@ img[src$=".svg"] {
   flex: 1;
   display: flex;
   flex-direction: column;
-  margin-bottom: 2rem;
+  overflow-y: hidden;
 }
 
 .sidebar-section h3 {
@@ -281,15 +261,7 @@ img[src$=".svg"] {
   flex: 1;
   overflow-y: auto;
   min-height: 0; /* Allow flex item to shrink below content size */
-  .status-indicator {
-    font-size: 0.85rem;
-  }
-  .status-ok {
-    color: #28a745;
-  }
-  .status-missing {
-    color: #dc3545;
-  }
+  padding: 0.5em;
 }
 
 .playlist-item {
@@ -297,19 +269,31 @@ img[src$=".svg"] {
   justify-content: space-between;
   align-items: center;
   padding: 0.75rem;
-  margin-bottom: 0.5rem;
+  margin-bottom: 8px;
   background: color-mix(in srgb, var(--secondary-color) 75%, transparent);
   border: 2px solid color-mix(in srgb, var(--border-color) 75%, transparent);
   border-radius: 8px;
   cursor: pointer;
   transition: all 0.2s ease;
+  position: relative;
   color: white;
+  min-height: 56px;
+}
+
+/* Ensure track count stays fixed and does not shift when name wraps */
+.playlist-track-count {
+  position: absolute;
+  right: 1rem;
+  top: 50%;
+  transform: translateY(-50%);
+  white-space: nowrap;
+  pointer-events: none;
+  font-size: 0.875rem;
+  opacity: 0.8;
 }
 
 .playlist-item:hover {
-  background: color-mix(in srgb, var(--hover-color) 75%, transparent);
-  border-color: color-mix(in srgb, var(--hover-color) 75%, transparent);
-  transform: translateY(-1px);
+  box-shadow: 0 0 0 2px var(--primary-color);
 }
 
 .playlist-item.active {
@@ -320,7 +304,6 @@ img[src$=".svg"] {
 .playlist-name {
   font-weight: 500;
   flex: 1;
-  user-select: none;
 }
 
 .playlist-track-count {
@@ -328,8 +311,6 @@ img[src$=".svg"] {
   color: var(--theme-text-color, #ffffff) !important;
   opacity: 0.7;
 }
-
-
 
 /* Main Content Container */
 .main-content {
@@ -344,6 +325,7 @@ img[src$=".svg"] {
   padding: 1rem;
   overflow-y: auto;
   position: relative;
+  padding: 2px;
 }
 
 .playlist-view {
@@ -352,6 +334,9 @@ img[src$=".svg"] {
   flex-direction: column;
   position: relative;
   z-index: 1;
+  padding-left: 1em;
+  padding-right: 1em;
+  padding-top: 1em;
 }
 
 .playlist-header {
@@ -420,11 +405,7 @@ img[src$=".svg"] {
   text-align: center;
   font-size: 1rem;
   color: var(--text-color-muted);
-  user-select: none; /* Make text non-selectable */
-  -webkit-user-select: none; /* For Safari */
-  -moz-user-select: none; /* For Firefox */
-  -ms-user-select: none; /* For Internet Explorer/Edge */
-  min-height: 60px; /* Match track item height */
+  min-height: 60px;
   cursor: pointer;
   transition: all 0.2s ease;
 }
@@ -448,7 +429,7 @@ img[src$=".svg"] {
 .tracks-list {
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
+  padding: 0.5em;
 }
 
 .track-item {
@@ -461,29 +442,13 @@ img[src$=".svg"] {
   transition: all 0.2s ease;
   position: relative;
   color: white;
+  min-height: 56px;
+  margin: 0;
+  margin-bottom: 8px;
 }
 
 .track-item:hover {
-  background: color-mix(in srgb, var(--hover-color) 75%, transparent);
-  border-color: color-mix(in srgb, var(--hover-color) 75%, transparent);
-  transform: translateY(-1px);
-}
-
-/* Align buttons in settings modal to the left */
-.settings-grid .export-section,
-.settings-grid .cookies-section {
-  text-align: left;
-}
-.settings-grid .export-section button,
-.settings-grid .cookies-section button {
-  margin-left: 0;
-  margin-right: 0;
-}
-
-/* Hover and Playing States */
-.track-item:hover:not(.playing) {
-  background: color-mix(in srgb, var(--hover-color) 75%, transparent);
-  border-color: color-mix(in srgb, var(--hover-color) 75%, transparent);
+  box-shadow: 0 0 0 2px var(--primary-color);
 }
 
 .track-item.playing {
@@ -491,11 +456,8 @@ img[src$=".svg"] {
   border-color: color-mix(in srgb, var(--primary-color) 75%, transparent);
 }
 
-
-
 .track-item.dragging {
   opacity: 0.5;
-  /* Removed tilt effect */
   transform: translateY(-2px);
 }
 
@@ -507,6 +469,7 @@ img[src$=".svg"] {
   cursor: grab;
   color: var(--text-color-muted);
   align-self: stretch; /* Make handle fill the height of the track item */
+  border-radius: 0 8px 8px 0;
 }
 
 .drag-handle:hover {
@@ -559,17 +522,6 @@ img[src$=".svg"] {
   user-select: none;
 }
 
-/* Make playlist track count and duration non-selectable */
-.playlist-track-count {
-  user-select: none;
-}
-
-/* Make player time elements non-selectable */
-#current-time,
-#total-time {
-  user-select: none;
-}
-
 .track-actions {
   display: flex;
   align-items: center;
@@ -578,8 +530,6 @@ img[src$=".svg"] {
   opacity: 1;
   transition: opacity 0.2s ease-in-out;
 }
-
-
 
 .track-volume-control {
   display: flex;
@@ -605,74 +555,6 @@ img[src$=".svg"] {
 
 .track-volume-icon:hover {
   opacity: 1;
-}
-
-
-
-/* Generic Slider Styles */
-input[type=range] {
-  -webkit-appearance: none;
-  appearance: none;
-  width: 100%;
-  background: transparent;
-  cursor: pointer;
-  height: 16px; /* Ensure consistent height */
-}
-
-/* Webkit Track */
-input[type=range]::-webkit-slider-runnable-track {
-  width: 100%;
-  height: 6px;
-  background: var(--secondary-color);
-  border: 1px solid var(--border-color);
-  border-radius: 3px;
-}
-
-/* Firefox Track */
-input[type=range]::-moz-range-track {
-  width: 100%;
-  height: 6px;
-  background: var(--secondary-color);
-  border: 1px solid var(--border-color);
-  border-radius: 3px;
-}
-
-/* Webkit Thumb */
-input[type=range]::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  appearance: none;
-  margin-top: -6px; /* Center thumb on track */
-  width: 16px;
-  height: 16px;
-  background: var(--border-color);
-  border: 2px solid var(--secondary-color);
-  border-radius: 50%;
-  transition: all 0.2s ease;
-}
-
-/* Firefox Thumb */
-input[type=range]::-moz-range-thumb {
-  width: 16px;
-  height: 16px;
-  background: var(--border-color);
-  border: 2px solid var(--secondary-color);
-  border-radius: 50%;
-  transition: all 0.2s ease;
-}
-
-/* Hover/Active States */
-input[type=range]:hover::-webkit-slider-thumb,
-input[type=range]:hover::-moz-range-thumb {
-  background: var(--slider-handle-color);
-  border-color: var(--slider-handle-color);
-  transform: scale(1.1);
-}
-
-input[type=range]:active::-webkit-slider-thumb,
-input[type=range]:active::-moz-range-thumb {
-  background: var(--slider-handle-color);
-  border-color: var(--slider-handle-color);
-  transform: scale(1.1);
 }
 
 .track-volume {
@@ -719,7 +601,6 @@ input[type=range]:active::-moz-range-thumb {
   text-overflow: ellipsis;
 }
 
-
 .player-btn {
   width: 40px;
   height: 40px;
@@ -739,7 +620,6 @@ input[type=range]:active::-moz-range-thumb {
   background: var(--hover-color);
 }
 
-
 .progress-container {
   flex: 1;
 }
@@ -747,7 +627,6 @@ input[type=range]:active::-moz-range-thumb {
 .player-volume {
   flex: 4;
   display: flex;
-
   align-items: center;
   gap: 0.5rem;
 }
@@ -810,8 +689,6 @@ input[type=range]:active::-moz-range-thumb {
   background-color: var(--primary-color);
 }
 
-
-
 .btn-small {
   padding: 0.25rem 0.5rem;
   font-size: 0.75rem;
@@ -845,7 +722,6 @@ input[type=range]:active::-moz-range-thumb {
   box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
 }
 
-/* Placeholder text styling */
 .input::placeholder {
   color: var(--theme-text-color, #ffffff) !important;
   text-shadow: none !important;
@@ -871,7 +747,6 @@ input[type=range]:active::-moz-range-thumb {
 }
 
 /* Unified Slider Styles */
-/* Unified Slider Styles */
 .slider {
   -webkit-appearance: none;
   appearance: none;
@@ -885,7 +760,6 @@ input[type=range]:active::-moz-range-thumb {
   margin: 10px 0; /* Add margin to give thumb space */
 }
 
-/* Slider Track */
 .slider::-webkit-slider-runnable-track {
   width: 100%;
   height: 100%;
@@ -894,22 +768,19 @@ input[type=range]:active::-moz-range-thumb {
   border-radius: 2px;
 }
 
-/* Slider Thumb */
 .slider::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
   width: 16px;
   height: 16px;
+  border-radius: 50%;
   background: var(--slider-handle-color);
   cursor: pointer;
-  border-radius: 50%;
-  border: 2px solid var(--slider-handle-border);
   transition: all 0.2s ease;
   margin-top: -6px; /* (track_height - thumb_height) / 2 */
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
 }
 
-/* Hover and Active States */
 .slider:hover::-webkit-slider-thumb,
 .slider:focus::-webkit-slider-thumb {
   background: var(--hover-color);
@@ -918,7 +789,25 @@ input[type=range]:active::-moz-range-thumb {
   box-shadow: 0 3px 6px rgba(0, 0, 0, 0.3);
 }
 
-/* Specific slider instances */
+.slider::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--slider-handle-color);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  margin-top: -6px; /* (track_height - thumb_height) / 2 */
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+.slider:hover::-moz-range-thumb,
+.slider:focus::-moz-range-thumb {
+  background: var(--hover-color);
+  border-color: var(--slider-handle-border);
+  transform: scale(1.2);
+  box-shadow: 0 3px 6px rgba(0, 0, 0, 0.3);
+}
+
 .volume-slider {
   width: 100px;
 }
@@ -931,6 +820,7 @@ input[type=range]:active::-moz-range-thumb {
 #confirm-modal {
   z-index: 2000; /* ensure confirm dialog overlays others */
 }
+
 .modal {
   position: fixed;
   top: 0;
@@ -965,7 +855,6 @@ input[type=range]:active::-moz-range-thumb {
 .modal-header h3 {
   font-size: 1.25rem;
   font-weight: 600;
-  user-select: none; 
   user-select: none; 
 }
 
@@ -1015,7 +904,6 @@ input[type=range]:active::-moz-range-thumb {
 .color-control label {
   font-weight: 500;
   user-select: none; 
-
 }
 
 .color-control input[type="color"] {
@@ -1085,8 +973,6 @@ input[type=range]:active::-moz-range-thumb {
   user-select: none; 
 }
 
-
-
 .checkbox-control {
   display: flex;
   align-items: center;
@@ -1134,7 +1020,6 @@ input[type=range]:active::-moz-range-thumb {
   font-weight: 500;
   color: var(--theme-text-color);
   user-select: none; 
-
 }
 
 .input-control small {
@@ -1263,7 +1148,6 @@ input[type="range"]::-moz-range-thumb:hover {
   min-width: 200px;
 }
 
-
 #current-time,
 #total-time {
   font-size: 0.75rem;
@@ -1272,7 +1156,6 @@ input[type="range"]::-moz-range-thumb:hover {
   min-width: 35px;
   text-align: center;
 }
-
 
 /* Phone Aspect Ratio Layout */
 @media (max-aspect-ratio: 1/1) {
@@ -1450,52 +1333,27 @@ input[type="range"]::-moz-range-thumb:hover {
     gap: 1rem;
     padding: 1rem;
   }
-  
 }
 
-/* Drag and Drop Animations */
-.track-item.drag-over {
-  border-color: var(--primary-color);
-  background: rgba(99, 102, 241, 0.1);
-}
-
-.playlist-item.drag-over {
-  border-color: var(--primary-color);
-  background: rgba(99, 102, 241, 0.1);
-}
-
-/* Animations */
+/* Animations - gated for reduced motion */
 @keyframes fadeIn {
   from { opacity: 0; transform: translateY(10px); }
   to { opacity: 1; transform: translateY(0); }
 }
 
-.track-item {
-  animation: fadeIn 0.3s ease;
-}
-
-.loading-spinner {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  text-align: center;
-  color: var(--theme-text-color);
-}
-
-.spinner {
-  width: 50px;
-  height: 50px;
-  border: 4px solid var(--border-color);
-  border-top: 4px solid var(--primary-color);
-  border-radius: 50%;
-  animation: spin 1s linear infinite;
-  margin: 0 auto 1rem;
-}
-
 @keyframes spin {
   0% { transform: rotate(0deg); }
   100% { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .track-item {
+    animation: fadeIn 0.3s ease;
+  }
+  
+  .spinner {
+    animation: spin 1s linear infinite;
+  }
 }
 
 .loading-spinner p {
@@ -1506,41 +1364,56 @@ input[type="range"]::-moz-range-thumb:hover {
 }
 
 /* Button Disabled States */
-button:disabled,
-.btn:disabled {
+
+/* ------------------------------------------------------------------
+   Performance-friendly overrides (added 2025-07-21)
+   ------------------------------------------------------------------*/
+
+/* Combined track and playlist styling */
+:is(.track-item, .playlist-item) {
+  display: flex;
+  align-items: center;
+  background: color-mix(in srgb, var(--secondary-color) 75%, transparent);
+  border: 2px solid color-mix(in srgb, var(--border-color) 75%, transparent);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  position: relative;
+  color: white;
+  min-height: 56px;
+  margin: 0;
+  margin-bottom: 8px;
+}
+
+:is(.track-item, .playlist-item):hover {
+  box-shadow: 0 0 0 2px var(--primary-color);
+}
+
+/* Disabled button states */
+:is(button, .btn):disabled {
   opacity: 0.5 !important;
   cursor: not-allowed !important;
   pointer-events: none !important;
   background-color: #6b7280 !important;
   color: #9ca3af !important;
-  text-shadow: none !important;
   border-color: #4b5563 !important;
 }
 
-button:disabled:hover,
-.btn:disabled:hover {
+:is(button, .btn):disabled:hover {
   background-color: #6b7280 !important;
   color: #9ca3af !important;
   transform: none !important;
   box-shadow: none !important;
 }
 
-/* Specific styling for download button when disabled */
+/* Download button specific disabled styling */
 #download-btn:disabled {
   background-color: #4b5563 !important;
   color: #6b7280 !important;
   border-color: #374151 !important;
-  cursor: not-allowed !important;
   opacity: 0.6 !important;
   min-width: 160px !important;
-  white-space: nowrap !important;
   font-size: 0.85rem !important;
-}
-
-#download-btn:disabled:hover {
-  background-color: #4b5563 !important;
-  color: #6b7280 !important;
-  transform: none !important;
 }
 
 /* Download button normal state */
@@ -1550,31 +1423,13 @@ button:disabled:hover,
   white-space: nowrap;
 }
 
-/* Backup item and label text colors */
-.backup-item {
-  color: var(--theme-text-color, #ffffff);
-}
-
-.backup-name {
-  color: var(--theme-text-color, #ffffff);
-}
-
-.backup-date {
-  color: var(--theme-text-color, #ffffff);
-}
-
-.modal-close {
-  color: var(--theme-text-color, #ffffff);
-}
-
-.track-type {
-  color: var(--theme-text-color, #ffffff);
-}
-
-.track-duration {
-  color: var(--theme-text-color, #ffffff);
-}
-
+/* Common text color utilities */
+.backup-item,
+.backup-name,
+.backup-date,
+.modal-close,
+.track-type,
+.track-duration,
 label {
   color: var(--theme-text-color, #ffffff);
 }
@@ -1612,4 +1467,14 @@ label {
 .settings-grid .version-info {
   font-size: 0.85rem;
   opacity: 0.8;
+}
+
+/* Custom Scrollbar Corner Styling */
+::-webkit-scrollbar-corner {
+  background: var(--container-color);
+}
+
+/* Custom Scrollbar Thumb Styling */
+::-webkit-scrollbar-thumb {
+  border-radius: 4px;
 }

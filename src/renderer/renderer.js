@@ -85,6 +85,35 @@ class FrontendLogger {
 const frontendLogger = new FrontendLogger();
 
 // ---------------------------------------------------------------------------
+// Performance diagnostics - renderer process
+// ---------------------------------------------------------------------------
+// Periodically log CPU usage of renderer process
+if (typeof process.getCPUUsage === 'function') {
+  setInterval(() => {
+    try {
+      const cpu = process.getCPUUsage();
+      frontendLogger.performance('renderer-cpu', cpu.percentCPUUsage.toFixed(2), cpu);
+    } catch (err) {
+      console.warn('[PERF] Failed to capture renderer CPU usage', err);
+    }
+  }, 5000);
+}
+
+// Log long tasks (>50ms) that can block the main thread
+if (typeof PerformanceObserver !== 'undefined' && PerformanceObserver.supportedEntryTypes?.includes('longtask')) {
+  try {
+    const longTaskObserver = new PerformanceObserver((list) => {
+      list.getEntries().forEach(entry => {
+        frontendLogger.performance('longtask', entry.duration.toFixed(2), { name: entry.name, start: entry.startTime });
+      });
+    });
+    longTaskObserver.observe({ entryTypes: ['longtask'] });
+  } catch (err) {
+    console.warn('[PERF] Failed to set up long task observer', err);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Real-time log forwarding from main process & worker pool to renderer console
 // ---------------------------------------------------------------------------
 // Any call to utils/logger.js in the main process emits a `main-log` event.
@@ -1020,12 +1049,20 @@ function setupAudioEventListeners() {
     if (elements.progressSlider) elements.progressSlider.max = audioElement.duration;
   };
 
-  audioElement.ontimeupdate = () => {
-    if (elements.currentTime) elements.currentTime.textContent = formatTime(audioElement.currentTime);
-    if (elements.progressSlider) elements.progressSlider.value = audioElement.currentTime;
-    
+  // Throttled UI updates for playback progress
+let lastUIUpdate = 0;
+const UI_UPDATE_INTERVAL = 250; // ms – 4 fps is plenty for time/progress display
+
+audioElement.ontimeupdate = () => {
     // Throttled save of playback position
-    const now = Date.now();
+        const now = Date.now();
+    // Throttle UI change frequency to lower layout work
+    if (now - lastUIUpdate > UI_UPDATE_INTERVAL) {
+      lastUIUpdate = now;
+      if (elements.currentTime) elements.currentTime.textContent = formatTime(audioElement.currentTime);
+      if (elements.progressSlider) elements.progressSlider.value = audioElement.currentTime;
+    }
+    
     if (now - lastSaveTime > SAVE_INTERVAL) {
       lastSaveTime = now;
       savePlaybackState();
@@ -1133,8 +1170,9 @@ function setupVisualizer() {
   const ctx = canvas.getContext('2d');
   
   function draw() {
-    if (!analyser || !dataArray) {
-      requestAnimationFrame(draw);
+    // Skip rendering when analyser isn't ready or when audio is not playing to save CPU
+    if (!analyser || !dataArray || audioElement.paused) {
+      animationId = requestAnimationFrame(draw);
       return;
     }
     
@@ -1166,10 +1204,12 @@ function setupVisualizer() {
       x += barWidth + 1;
     }
     
-    requestAnimationFrame(draw);
+    // Schedule next frame and keep handle so we can cancel later
+    animationId = requestAnimationFrame(draw);
   }
   
-  draw();
+  // Start the visualizer loop and store the frame id so it can be cancelled
+  animationId = requestAnimationFrame(draw);
 }
 
 // Background visualizer function

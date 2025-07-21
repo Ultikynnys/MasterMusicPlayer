@@ -268,6 +268,34 @@ function createWindow() {
     mainWindow.on('restore', () => logger.systemEvent('window-restored'));
     mainWindow.on('focus', () => logger.systemEvent('window-focused'));
     mainWindow.on('blur', () => logger.systemEvent('window-blurred'));
+
+    // -----------------------------------------------------------------------
+    // Performance diagnostics - main process & child processes
+    // -----------------------------------------------------------------------
+    setInterval(() => {
+      try {
+        const metrics = app.getAppMetrics();
+        if (!Array.isArray(metrics)) return;
+        const top = metrics
+          .sort((a, b) => b.cpu.percentCPUUsage - a.cpu.percentCPUUsage)
+          .slice(0, 5)
+          .map(m => ({
+            pid: m.pid,
+            type: m.type,
+            cpu: m.cpu.percentCPUUsage.toFixed(2),
+            memoryMB: (m.memory.private / (1024 * 1024)).toFixed(1)
+          }));
+        if (top.length > 0) {
+          logger.performance('app-cpu-snapshot', 0, { top });
+          // Also forward to renderer devtools for quick inspection
+          if (mainWindow && mainWindow.webContents) {
+            mainWindow.webContents.send('main-log', { level: 'info', message: 'CPU snapshot', data: top });
+          }
+        }
+      } catch (err) {
+        logger.warn('Failed to capture app metrics', err);
+      }
+    }, 5000);
     
   } catch (error) {
     logger.error('Failed to create main window', error);

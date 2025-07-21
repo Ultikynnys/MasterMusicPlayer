@@ -23,14 +23,13 @@ class ProcessWorkerPool extends EventEmitter {
     this.ytDlpPath = ytDlpPath;
     this.ffmpegPath = ffmpegPath;
 
-    this.initializeWorkers();
+    // Lazily create workers only when tasks are assigned to minimise idle RAM usage
+    // Workers will be spawned in assignNextTask() when needed.
   }
 
+  // Legacy eager initialisation removed – kept for backward compatibility in case it is called elsewhere
   initializeWorkers() {
-    for (let i = 0; i < this.size; i++) {
-      this.createWorker(i);
-    }
-    logger.info(`Initialized ${this.size} download workers using multiprocessing`);
+    // No-op: workers are now created lazily to save memory
   }
 
   createWorker(id) {
@@ -84,6 +83,17 @@ class ProcessWorkerPool extends EventEmitter {
       this.activeWorkers--;
       workerData.busy = false;
       workerData.tasksCompleted++;
+
+      // If no queued tasks remain, terminate this idle worker to free memory
+      if (this.queue.length === 0) {
+        try {
+          workerData.process.kill('SIGTERM');
+        } catch (e) {
+          // ignore if already dead
+        }
+        this.workers = this.workers.filter(w => w !== workerData);
+        logger.info(`Terminated idle worker ${workerData.id} to reduce RAM. Remaining workers: ${this.workers.length}`);
+      }
 
       const taskPromise = this.taskPromises.get(msg.taskId);
       if (taskPromise) {
@@ -139,10 +149,15 @@ class ProcessWorkerPool extends EventEmitter {
   }
 
   assignNextTask() {
-    if (this.queue.length === 0 || this.activeWorkers >= this.size) return;
+    if (this.queue.length === 0) return;
 
-    const availableWorker = this.workers.find(w => !w.busy);
-    if (availableWorker) {
+    // If there are no idle workers and we have capacity, spawn a new one lazily
+    let availableWorker = this.workers.find(w => !w.busy);
+    if (!availableWorker && this.workers.length < this.size) {
+      availableWorker = this.createWorker(this.workers.length);
+    }
+
+    if (availableWorker && !availableWorker.busy) {
       const task = this.queue.shift();
       availableWorker.busy = true;
       this.activeWorkers++;
@@ -153,6 +168,8 @@ class ProcessWorkerPool extends EventEmitter {
   }
 
   addTask(trackInfo, songsPath, playlistId) {
+    // Ensure we attempt assignment immediately in case there were no tasks before
+
     const taskId = generateTaskId(playlistId, trackInfo.id);
     
     // Include cookies path so worker can find cookies.txt
