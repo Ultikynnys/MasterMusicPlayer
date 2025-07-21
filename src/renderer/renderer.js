@@ -836,19 +836,22 @@ async function removeTrackFromCurrentPlaylist(trackId) {
   if (!currentPlaylist) return;
 
   const trackIndex = currentPlaylist.tracks.findIndex(t => t.id === trackId);
+  frontendLogger.info('removeTrackFromCurrentPlaylist', { trackId, trackIndex, currentTrackIndex, playlistLength: currentPlaylist.tracks.length });
 
   if (trackIndex > -1) {
     // If the removed track is the current one, stop playback.
     if (currentTrack && currentTrack.id === trackId) {
       // Temporarily detach error handler to avoid benign MEDIA_ELEMENT_ERROR when src is cleared
       const originalOnError = audioElement.onerror;
+      const originalOnEnded = audioElement.onended;
       audioElement.onerror = null;
-      audioElement.onended = null; // Prevent playNext() from being called
+      audioElement.onended = null; // Temporarily disable to avoid automatic advance while clearing src
       audioElement.pause();
       audioElement.src = '';
       // Restore error handler asynchronously to prevent missing real errors
       setTimeout(() => {
         audioElement.onerror = originalOnError;
+        audioElement.onended = originalOnEnded; // Restore onended handler
       }, 0);
       currentTrack = null;
       isPlaying = false;
@@ -892,6 +895,7 @@ let lastFailedAttemptTime = 0;
 const RETRY_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes cooldown before retrying failed tracks
 
 async function playTrack(track, index) {
+  frontendLogger.info('playTrack', { trackId: track ? track.id : null, index });
   const startTime = Date.now();
 
   // Prevent infinite loops - if same track fails repeatedly, skip it temporarily
@@ -1029,6 +1033,7 @@ function setupAudioEventListeners() {
   };
 
   audioElement.onended = () => {
+    frontendLogger.info('audioElement ended', { isRepeat, currentTrackIndex, playlistLength: currentPlaylist ? currentPlaylist.tracks.length : 0 });
     if (isRepeat) {
       // Restart current track seamlessly
       audioElement.currentTime = 0;
@@ -1596,6 +1601,7 @@ function togglePlayPause() {
 }
 
 function playNext() {
+  frontendLogger.info('playNext called', { currentTrackIndex, playlistLength: currentPlaylist ? currentPlaylist.tracks.length : 0 });
   if (!currentPlaylist || currentPlaylist.tracks.length === 0) return;
   
   const nextIndex = (currentTrackIndex + 1) % currentPlaylist.tracks.length;

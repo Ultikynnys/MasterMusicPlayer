@@ -88,3 +88,4 @@ data/playlists/
 data/songs/
 *.png~
 *.kra
+data/config/app.json
