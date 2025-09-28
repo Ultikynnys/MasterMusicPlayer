@@ -49,7 +49,7 @@ An Electron-based music player that serves as a wrapper for [yt-dlp](https://git
 
 The app can host a small HTTP server that shows a Now Playing page and streams the active track to remote devices. You’ll find all controls in `Settings → Broadcast`.
 
-![Broadcast](Showcase/broadcast.png)
+![Broadcast](Showcase/Broadcast.png)
 
 
 ### Quick start (Local / LAN)
