@@ -71,38 +71,9 @@ class FrontendLogger {
   async userAction(action, details = null) {
     await this.log('USER_ACTION', action, details);
   }
-
-  async performance(operation, duration, details = null) {
-    const perfData = {
-      operation,
-      duration: `${duration}ms`,
-      details
-    };
-    await this.log('PERFORMANCE', `${operation} completed`, perfData);
-  }
 }
 
 const frontendLogger = new FrontendLogger();
-
-// ---------------------------------------------------------------------------
-// Performance diagnostics - renderer process
-// ---------------------------------------------------------------------------
-// Periodically log CPU usage of renderer process
-// Periodic renderer CPU logging removed to improve performance
-
-// Log long tasks (>50ms) that can block the main thread
-if (typeof PerformanceObserver !== 'undefined' && PerformanceObserver.supportedEntryTypes?.includes('longtask')) {
-  try {
-    const longTaskObserver = new PerformanceObserver((list) => {
-      list.getEntries().forEach(entry => {
-        frontendLogger.performance('longtask', entry.duration.toFixed(2), { name: entry.name, start: entry.startTime });
-      });
-    });
-    longTaskObserver.observe({ entryTypes: ['longtask'] });
-  } catch (err) {
-    console.warn('[PERF] Failed to set up long task observer', err);
-  }
-}
 
 // ---------------------------------------------------------------------------
 // Real-time log forwarding from main process & worker pool to renderer console
@@ -189,6 +160,8 @@ function hexToRgb(hex) {
 // Icon paths
 const REPEAT_ICON = './assets/Repeat.svg';
 const NO_REPEAT_ICON = './assets/NoRepeat.svg';
+const SHUFFLE_ICON = './assets/Shuffle.png';
+const NO_SHUFFLE_ICON = './assets/NoShuffle.png';
 
 // ----- Audio setup -----
 // Create a single hidden <audio> element that will be reused for every track
@@ -216,6 +189,9 @@ let currentTrack = null;
 let currentTrackIndex = -1;
 let isPlaying = false;
 let isRepeat = false;
+let isShuffle = false;
+let shuffledIndices = []; // Array to store shuffled track indices
+let shuffleIndex = -1; // Current position in shuffled array
 let playlists = [];
 // currentAudio removed - using audioElement instead
 let appConfig = {};
@@ -262,6 +238,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     prevBtn: document.getElementById('prev-btn'),
     nextBtn: document.getElementById('next-btn'),
     repeatBtn: document.getElementById('repeat-btn'),
+    shuffleBtn: document.getElementById('shuffle-btn'),
     progressSlider: document.getElementById('progress-slider'),
     volumeSlider: document.getElementById('volume-slider'),
     volumeBtn: document.getElementById('volume-btn'),
@@ -329,7 +306,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Restore playback state after everything is initialized
     await restorePlaybackState();
     
-    frontendLogger.performance('app-initialization', Date.now() - startTime);
     frontendLogger.info('App initialization completed successfully');
   } catch (error) {
     frontendLogger.error('Failed to initialize app', error);
@@ -428,7 +404,6 @@ async function loadTheme() {
 
     applyTheme(theme);
     updateThemeInputs(theme);
-    frontendLogger.performance('load-theme', Date.now() - startTime, { theme });
     frontendLogger.info('Theme loaded successfully');
   } catch (error) {
     frontendLogger.error('Error loading theme', error);
@@ -641,7 +616,6 @@ async function loadPlaylists() {
     frontendLogger.info('Loading playlists');
     playlists = await ipcRenderer.invoke('get-playlists');
     renderPlaylists();
-    frontendLogger.performance('load-playlists', Date.now() - startTime, { playlistCount: playlists.length });
     frontendLogger.info('Playlists loaded successfully', { count: playlists.length });
   } catch (error) {
     frontendLogger.error('Error loading playlists', error);
@@ -739,10 +713,14 @@ async function selectPlaylist(playlist) {
     updateDownloadButtonState();
     
     renderTracks();
-    frontendLogger.info('Playlist selected successfully', { playlistId: playlist.id, name: playlist.name });
     
-    // Save playback state when playlist changes
-    savePlaybackState();
+    // Generate shuffled indices if shuffle is enabled
+    if (isShuffle) {
+      generateShuffledIndices();
+      frontendLogger.info('Generated shuffled indices for new playlist', { playlistId: playlist.id });
+    }
+    
+    
   } catch (error) {
     frontendLogger.error('Error selecting playlist', error, { playlistId: playlist?.id });
   }
@@ -947,12 +925,6 @@ async function playTrack(track, index) {
   audioElement.pause();
 
   try {
-    frontendLogger.userAction('track-play-requested', { 
-      trackId: track.id, 
-      trackName: track.name, 
-      trackIndex: index,
-      fileType: track.fileType 
-    });
     
     if (audioCtx.state === 'suspended') {
       await audioCtx.resume();
@@ -986,7 +958,6 @@ async function playTrack(track, index) {
         isPlaying = true;
         updatePlayerUI();
         updateTrackHighlight();
-        frontendLogger.info('Track started playing.', { trackId: track.id, name: track.name, volume: finalVolume });
       }).catch(error => {
         if (error.name !== 'AbortError') {
           frontendLogger.error('Audio playback error', error, { trackId: track.id });
@@ -994,14 +965,7 @@ async function playTrack(track, index) {
       });
     }
 
-    frontendLogger.performance('track-play', Date.now() - startTime, { 
-      trackId: track.id, 
-      trackName: track.name,
-      fileType: track.fileType
-    });
     
-    // Save playback state when track changes
-    savePlaybackState();
 
   } catch (error) {
     frontendLogger.error('Error playing track', error, { 
@@ -1028,6 +992,66 @@ function updateRepeatIcon() {
   if (img) {
     const currentIconColor = getComputedStyle(document.documentElement).getPropertyValue('--theme-icon-color').trim() || '#ffffff';
     applySVGStencilColor(img, currentIconColor);
+  }
+}
+
+function updateShuffleIcon() {
+  if (!elements.shuffleBtn) return;
+  const iconSrc = isShuffle ? SHUFFLE_ICON : NO_SHUFFLE_ICON;
+  elements.shuffleBtn.innerHTML = `<img src="${iconSrc}" alt="${isShuffle ? 'Shuffle enabled' : 'Shuffle disabled'}" width="32" height="32">`;
+  elements.shuffleBtn.classList.toggle('active', isShuffle);
+  
+  // Apply current theme color to the newly created image using stencil approach
+  const img = elements.shuffleBtn.querySelector('img');
+  if (img) {
+    const currentIconColor = getComputedStyle(document.documentElement).getPropertyValue('--theme-icon-color').trim() || '#ffffff';
+    applySVGStencilColor(img, currentIconColor);
+  }
+}
+
+let availableIndices = [];
+let playedIndices = [];
+
+function generateShuffledIndices() {
+  if (!currentPlaylist || currentPlaylist.tracks.length === 0) {
+    availableIndices = [];
+    playedIndices = [];
+    return;
+  }
+  
+  // Reset both arrays
+  availableIndices = Array.from({ length: currentPlaylist.tracks.length }, (_, i) => i);
+  playedIndices = [];
+  
+  // Fisher-Yates shuffle the available indices
+  for (let i = availableIndices.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [availableIndices[i], availableIndices[j]] = [availableIndices[j], availableIndices[i]];
+  }
+  
+  // Log the newly generated shuffle pool
+  frontendLogger.info('Generated new shuffle pool', { availableIndices: [...availableIndices] });
+}
+
+function toggleShuffle() {
+  isShuffle = !isShuffle;
+  updateShuffleIcon();
+  
+  if (isShuffle) {
+    // Generate new shuffle order when enabling shuffle
+    generateShuffledIndices();
+    frontendLogger.info('Shuffle enabled', { playlistLength: currentPlaylist?.tracks.length });
+  } else {
+    // Clear shuffle data when disabling
+    availableIndices = [];
+    playedIndices = [];
+    frontendLogger.info('Shuffle disabled');
+  }
+  
+  // Save shuffle state to config
+  if (appConfig.playbackState) {
+    appConfig.playbackState.isShuffle = isShuffle;
+    ipcRenderer.invoke('save-app-config', appConfig);
   }
 }
 
@@ -1087,6 +1111,7 @@ audioElement.ontimeupdate = () => {
 document.addEventListener('DOMContentLoaded', () => {
   setupAudioEventListeners();
   updateRepeatIcon();
+  updateShuffleIcon();
 });
 
 function updatePlayerUI() {
@@ -1111,6 +1136,7 @@ function updatePlayerUI() {
     const pauseIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-pause icon-white"><rect x="6" y="4" width="4" height="16"></rect><rect x="14" y="4" width="4" height="16"></rect></svg>`;
     elements.playPauseBtn.innerHTML = isPlaying ? pauseIcon : playIcon;
     updateRepeatIcon();
+    updateShuffleIcon();
   } else {
     resetPlayerUI();
   }
@@ -1216,11 +1242,18 @@ function setupBackgroundVisualizer() {
   
   // Set canvas size to match the content area
   function resizeCanvas() {
-    // Calculate the content area dimensions (full height behind audio player)
-    const sidebarWidth = 300;
-    const headerHeight = 70;
-    
-    canvas.width = window.innerWidth - sidebarWidth;
+    // Dynamically calculate sidebar and header sizes to support vertical / collapsed layouts
+    const sidebar = document.querySelector('.sidebar');
+    const visibleSidebarWidth = (sidebar && getComputedStyle(sidebar).display !== 'none') ? sidebar.offsetWidth : 0;
+
+    const header = document.querySelector('.header');
+    const headerHeight = header ? header.offsetHeight : 0;
+
+    // Position the canvas immediately after the sidebar / below the header
+    canvas.style.left = `${visibleSidebarWidth}px`;
+    canvas.style.top = `${headerHeight}px`;
+
+    canvas.width = window.innerWidth - visibleSidebarWidth;
     canvas.height = window.innerHeight - headerHeight;
   }
   
@@ -1307,8 +1340,6 @@ function setVolume(volume) {
   globalVolume = volume;
   updateVolumeIcon(volume);
   
-  // Save playback state when volume changes
-  savePlaybackState();
 }
 
 function toggleMute() {
@@ -1425,11 +1456,11 @@ function setupEventListeners() {
   if (elements.prevBtn) elements.prevBtn.addEventListener('click', playPrevious);
   if (elements.nextBtn) elements.nextBtn.addEventListener('click', playNext);
   if (elements.repeatBtn) elements.repeatBtn.addEventListener('click', toggleRepeat);
+  if (elements.shuffleBtn) elements.shuffleBtn.addEventListener('click', toggleShuffle);
   if (elements.progressSlider) elements.progressSlider.addEventListener('input', (e) => {
     if (audioElement) {
       audioElement.currentTime = e.target.value;
-      // Save playback state when user seeks
-      savePlaybackState();
+
     }
   });
   if (elements.volumeSlider) elements.volumeSlider.addEventListener('input', async (e) => {
@@ -1441,8 +1472,6 @@ function setupEventListeners() {
     }
     updateVolumeIcon(globalVolume);
     
-    // Save playback state when volume changes
-    savePlaybackState();
   });
   if (elements.volumeBtn) {
     elements.volumeBtn.addEventListener('click', toggleMute);
@@ -1632,21 +1661,59 @@ function togglePlayPause() {
 }
 
 function playNext() {
-  frontendLogger.info('playNext called', { currentTrackIndex, playlistLength: currentPlaylist ? currentPlaylist.tracks.length : 0 });
+  frontendLogger.info('playNext called', { currentTrackIndex, playlistLength: currentPlaylist ? currentPlaylist.tracks.length : 0, isShuffle, shuffleIndex });
   if (!currentPlaylist || currentPlaylist.tracks.length === 0) return;
   
-  const nextIndex = (currentTrackIndex + 1) % currentPlaylist.tracks.length;
-  const nextTrack = currentPlaylist.tracks[nextIndex];
+  let nextIndex;
+    if (isShuffle) {
+      if (availableIndices.length === 0) {
+        // All songs played, regenerate available indices
+        generateShuffledIndices();
+      }
+      
+      if (availableIndices.length > 0) {
+        frontendLogger.info('Shuffle pool before picking next', { availableIndices: [...availableIndices] });
+        // Pick the next song from available indices and track it
+        nextIndex = availableIndices.shift();
+        frontendLogger.info('Picked index from shuffle pool', { removedIndex: nextIndex, remainingPool: [...availableIndices] });
+        playedIndices.push(nextIndex);
+      } else {
+        // Fallback to normal behavior if shuffle generation failed
+        nextIndex = (currentTrackIndex + 1) % currentPlaylist.tracks.length;
+      }
+    } else {
+      // Normal sequential playback
+      nextIndex = (currentTrackIndex + 1) % currentPlaylist.tracks.length;
+    }
   
+  const nextTrack = currentPlaylist.tracks[nextIndex];
   playTrack(nextTrack, nextIndex);
 }
 
 function playPrevious() {
+  frontendLogger.info('playPrevious called', { currentTrackIndex, playlistLength: currentPlaylist ? currentPlaylist.tracks.length : 0, isShuffle, shuffleIndex });
   if (!currentPlaylist || currentPlaylist.tracks.length === 0) return;
   
-  const prevIndex = currentTrackIndex === 0 ? currentPlaylist.tracks.length - 1 : currentTrackIndex - 1;
-  const prevTrack = currentPlaylist.tracks[prevIndex];
+  let prevIndex;
+    if (isShuffle) {
+      if (playedIndices.length > 1) {
+        // Go back to the previously played song
+        playedIndices.pop(); // Remove current song
+        prevIndex = playedIndices[playedIndices.length - 1];
+        // Put the current song back into available indices
+        if (currentTrackIndex >= 0) {
+          availableIndices.unshift(currentTrackIndex);
+        }
+      } else {
+        // No previous songs in history, use fallback
+        prevIndex = currentTrackIndex === 0 ? currentPlaylist.tracks.length - 1 : currentTrackIndex - 1;
+      }
+    } else {
+      // Normal sequential playback
+      prevIndex = currentTrackIndex === 0 ? currentPlaylist.tracks.length - 1 : currentTrackIndex - 1;
+    }
   
+  const prevTrack = currentPlaylist.tracks[prevIndex];
   playTrack(prevTrack, prevIndex);
 }
 
@@ -1655,8 +1722,6 @@ function toggleRepeat() {
   updateRepeatIcon();
   updatePlayerUI();
   
-  // Save playback state when repeat setting changes
-  savePlaybackState();
 }
 
 function stopTrack() {
@@ -1944,7 +2009,6 @@ async function downloadFromUrl() {
     console.log('IPC download request result:', result); // Debug log
     
     elements.urlInput.value = '';
-    frontendLogger.performance('download-request', Date.now() - startTime, { url });
     frontendLogger.info('Download request sent successfully', { url });
   } catch (error) {
     hideLoading(); // Hide loading on error
@@ -2554,27 +2618,9 @@ async function savePlaybackState() {
     appConfig.playbackState.isRepeat = isRepeat;
   }
   
-  // Debug logging
-  console.log('Saving state - currentTrack:', currentTrack ? currentTrack.name : 'null');
-  console.log('Saving state - currentPlaylist:', currentPlaylist ? currentPlaylist.name : 'null');
-  console.log('Saving state - currentTime:', audioElement.currentTime);
+  // Save shuffle state
+  appConfig.playbackState.isShuffle = isShuffle;
   
-  try {
-    const success = await ipcRenderer.invoke('save-app-config', appConfig);
-    if (success) {
-      frontendLogger.info('Playback state saved successfully', {
-        volume: appConfig.playbackState.volume,
-        trackId: appConfig.playbackState.currentTrackId,
-        playlistId: appConfig.playbackState.currentPlaylistId,
-        currentTime: appConfig.playbackState.currentTime,
-        isRepeat: appConfig.playbackState.isRepeat
-      });
-    } else {
-      frontendLogger.warn('Failed to save playback state - IPC returned false');
-    }
-  } catch (error) {
-    frontendLogger.error('Failed to save playback state', error);
-  }
 }
 
 async function restorePlaybackState() {
@@ -2595,6 +2641,7 @@ async function restorePlaybackState() {
     console.log('Current time:', state.currentTime);
     console.log('Volume:', state.volume);
     console.log('Is repeat:', state.isRepeat);
+    console.log('Is shuffle:', state.isShuffle);
     
     // Restore volume
     if (typeof state.volume === 'number' && state.volume >= 0) {
@@ -2612,6 +2659,13 @@ async function restorePlaybackState() {
     if (typeof state.isRepeat === 'boolean' && state.saveRepeatState !== false) {
       isRepeat = state.isRepeat;
       updateRepeatIcon();
+    }
+    
+    // Restore shuffle state
+    if (typeof state.isShuffle === 'boolean') {
+      isShuffle = state.isShuffle;
+      updateShuffleIcon();
+      // If shuffle was enabled, we'll regenerate shuffled indices when a playlist is selected
     }
     
     // Restore playlist and track
@@ -2727,6 +2781,12 @@ function handleKeyboardShortcuts(e) {
         toggleRepeat();
       }
       break;
+    case 'KeyS':
+      if (e.ctrlKey) {
+        e.preventDefault();
+        toggleShuffle();
+      }
+      break;
     case 'F5':
       e.preventDefault();
       // Force reset the app by reloading the window
@@ -2835,7 +2895,6 @@ ipcRenderer.on('main-log', (event, logData) => {
       console.warn('[MAIN]', logMessage);
     }
   }
-  // Skip performance, user action, and system logs to reduce noise
 });
 
 // Helper functions for the global loading overlay

@@ -152,6 +152,7 @@ const defaultAppConfig = {
     currentPlaylistId: null,
     currentTime: 0,
     isRepeat: false,
+    isShuffle: false,
     saveRepeatState: true,
     saveTrackTime: true
   }
@@ -259,49 +260,14 @@ function createWindow() {
     
     const menu = Menu.buildFromTemplate(template);
     Menu.setApplicationMenu(menu);
-    logger.info('Set up F12 accelerator for developer tools');
 
 
-    // Log window events
-    mainWindow.on('minimize', () => logger.systemEvent('window-minimized'));
-    mainWindow.on('maximize', () => logger.systemEvent('window-maximized'));
-    mainWindow.on('restore', () => logger.systemEvent('window-restored'));
-    mainWindow.on('focus', () => logger.systemEvent('window-focused'));
-    mainWindow.on('blur', () => logger.systemEvent('window-blurred'));
-
-    // -----------------------------------------------------------------------
-    // Performance diagnostics - main process & child processes
-    // -----------------------------------------------------------------------
-    setInterval(() => {
-      try {
-        const metrics = app.getAppMetrics();
-        if (!Array.isArray(metrics)) return;
-        const top = metrics
-          .sort((a, b) => b.cpu.percentCPUUsage - a.cpu.percentCPUUsage)
-          .slice(0, 5)
-          .map(m => ({
-            pid: m.pid,
-            type: m.type,
-            cpu: m.cpu.percentCPUUsage.toFixed(2),
-            memoryMB: (m.memory.private / (1024 * 1024)).toFixed(1)
-          }));
-        if (top.length > 0) {
-          logger.performance('app-cpu-snapshot', 0, { top });
-          // Also forward to renderer devtools for quick inspection
-          if (mainWindow && mainWindow.webContents) {
-            mainWindow.webContents.send('main-log', { level: 'info', message: 'CPU snapshot', data: top });
-          }
-        }
-      } catch (err) {
-        logger.warn('Failed to capture app metrics', err);
-      }
-    }, 5000);
-    
   } catch (error) {
-    logger.error('Failed to create main window', error);
-    throw error;
+    logger.error('Error creating main window', error);
   }
 }
+
+
 
 app.whenReady().then(async () => {
   // Determine correct writable paths first
@@ -355,16 +321,15 @@ app.whenReady().then(async () => {
     // Run duration scan in background after app is ready (non-blocking)
     setTimeout(async () => {
       try {
-        logger.info('Starting background duration scan for tracks without duration');
         const result = await scanAndUpdateTrackDurations();
         if (result.updated > 0) {
-          logger.info(`Background duration scan completed: ${result.updated} tracks updated, ${result.failed} failed`);
+
           // Notify renderer if any tracks were updated
           if (mainWindow && !mainWindow.isDestroyed()) {
             mainWindow.webContents.send('durations-updated', result);
           }
         } else {
-          logger.info('Background duration scan completed: no tracks needed updating');
+
         }
       } catch (error) {
         logger.error('Error during background duration scan', error);
@@ -411,14 +376,6 @@ process.on('unhandledRejection', (reason, promise) => {
   logger.crash(new Error(reason), 'Unhandled promise rejection in main process');
 });
 
-// App event logging
-app.on('before-quit', () => logger.systemEvent('app-before-quit'));
-app.on('will-quit', () => logger.systemEvent('app-will-quit'));
-app.on('quit', () => logger.systemEvent('app-quit'));
-app.on('browser-window-created', () => logger.systemEvent('browser-window-created'));
-app.on('browser-window-focus', () => logger.systemEvent('browser-window-focus'));
-app.on('browser-window-blur', () => logger.systemEvent('browser-window-blur'));
-
 // IPC handlers for playlist management
 ipcMain.handle('get-playlists', async () => {
   const startTime = Date.now();
@@ -452,7 +409,6 @@ ipcMain.handle('get-playlists', async () => {
       }
     }
     
-    logger.performance('get-playlists', Date.now() - startTime, { playlistCount: playlists.length });
     return playlists;
   } catch (error) {
     logger.error('Error getting playlists', error);
@@ -472,7 +428,6 @@ withErrorHandling('create-playlist', async (event, name) => {
     };
     
     await fs.writeJson(path.join(playlistsPath, `${playlist.id}.json`), playlist);
-    logger.performance('create-playlist', Date.now() - startTime, { playlistId: playlist.id, name });
     logger.info('Playlist created successfully', { playlistId: playlist.id, name });
     return playlist;
   } catch (error) {
@@ -486,7 +441,6 @@ withErrorHandling('update-playlist', async (event, playlist) => {
   try {
     logger.userAction('update-playlist-requested', { playlistId: playlist.id, name: playlist.name, trackCount: playlist.tracks.length });
     await fs.writeJson(path.join(playlistsPath, `${playlist.id}.json`), playlist);
-    logger.performance('update-playlist', Date.now() - startTime, { playlistId: playlist.id });
     return playlist;
   } catch (error) {
     logger.error('Error updating playlist', error, { playlistId: playlist.id });
@@ -569,7 +523,6 @@ withErrorHandling('delete-playlist', async (event, playlistId) => {
     // 5. Finally, delete the playlist JSON
     await fs.remove(playlistFile);
 
-    logger.performance('delete-playlist', Date.now() - startTime, { playlistId });
     logger.info('Playlist deleted successfully', { playlistId });
     return true;
   } catch (error) {
@@ -658,7 +611,7 @@ withErrorHandling('update-theme-config', async (event, theme) => {
  * @returns {Promise<{updated: number, failed: number}>} Results of the scan
  */
 async function scanAndUpdateTrackDurations() {
-    logger.info('Starting track duration scan for missing durations');
+
     let updated = 0;
     let failed = 0;
     
@@ -713,11 +666,10 @@ async function scanAndUpdateTrackDurations() {
             // Save the playlist if any tracks were updated
             if (playlistUpdated) {
                 await fs.writeJson(playlistPath, playlist);
-                logger.info(`Updated playlist: ${playlist.name} with new durations`);
             }
         }
         
-        logger.info(`Duration scan completed. Updated: ${updated}, Failed: ${failed}`);
+      
         return { updated, failed };
         
     } catch (error) {
@@ -1346,11 +1298,6 @@ withErrorHandling('add-local-file', async (event, { filePath, playlistId }) => {
       addedAt: new Date().toISOString()
     };
     
-    logger.performance('add-local-file', Date.now() - startTime, { 
-      fileName, 
-      fileType: fileExt, 
-      playlistId 
-    });
     logger.info('Local file added successfully', { 
       trackId: track.id, 
       fileName, 
@@ -1414,11 +1361,6 @@ withErrorHandling('add-local-file-content', async (event, { fileName, fileConten
       addedAt: new Date().toISOString()
     };
     
-    logger.performance('add-local-file-content', Date.now() - startTime, { 
-      fileName, 
-      fileType: fileExt, 
-      playlistId 
-    });
     logger.info('Local file content added successfully', { 
       trackId: track.id, 
       fileName, 
@@ -1518,7 +1460,6 @@ withErrorHandling('create-backup', () => {
       try {
         const songCount = (await fs.readdir(songsPath)).length;
         const playlistCount = (await fs.readdir(playlistsPath)).length;
-        logger.performance('create-backup', Date.now() - startTime, { playlistCount, songCount, backupFile });
         logger.info('Backup created successfully', { backupFile, playlistCount, songCount });
         resolve(backupFile);
       } catch (err) {
@@ -1579,11 +1520,6 @@ withErrorHandling('restore-backup', async (event, backupFile) => {
     const songCount = (await fs.readdir(songsPath)).length;
     const playlistCount = (await fs.readdir(playlistsPath)).length;
 
-    logger.performance('restore-backup', Date.now() - startTime, {
-      backupFile,
-      playlistsRestored: playlistCount,
-      songsRestored: songCount
-    });
     logger.info('Backup restored successfully', {
       backupFile,
       playlistsRestored: playlistCount,
@@ -1617,8 +1553,6 @@ withErrorHandling('get-backups', async () => {
     }
 
     const sortedBackups = backups.sort((a, b) => b.createdAt - a.createdAt);
-    logger.performance('get-backups', Date.now() - startTime, { backupCount: sortedBackups.length });
-
     return sortedBackups;
   } catch (error) {
     logger.error('Error getting backups', error);
@@ -1631,7 +1565,6 @@ withErrorHandling('delete-backup', async (event, backupPath) => {
   try {
     logger.userAction('delete-backup-requested', { backupPath });
     await fs.remove(backupPath);
-    logger.performance('delete-backup', Date.now() - startTime, { backupPath });
     logger.info('Backup deleted successfully', { backupPath });
     return true;
   } catch (error) {
@@ -1744,7 +1677,6 @@ withErrorHandling('export-all-songs', async () => {
       exportPath
     };
     
-    logger.performance('export-all-songs', Date.now() - startTime, summary);
     logger.info('Export completed', summary);
     
     return {
@@ -1762,28 +1694,28 @@ withErrorHandling('export-all-songs', async () => {
 // Frontend logging handler
 ipcMain.handle('log-frontend-event', async (event, logEntry) => {
   try {
-    const { level, message, data } = logEntry;
-    
+    const { level = 'INFO', message = '', data } = logEntry || {};
+
+    // Keep renderer logs visible in the main-process console, but do NOT forward
+    // them back to the renderer to avoid duplicate log entries.
+    const prefix = `[RENDERER ${level}]`;
+    const args = data ? [prefix, message, data] : [prefix, message];
+
     switch (level) {
       case 'ERROR':
-        await logger.error(`[RENDERER] ${message}`, data?.error, data);
+        console.error(...args);
         break;
       case 'WARN':
-        await logger.warn(`[RENDERER] ${message}`, data);
-        break;
-      case 'USER_ACTION':
-        await logger.userAction(`[RENDERER] ${message}`, data);
-        break;
-      case 'PERFORMANCE':
-        await logger.performance(`[RENDERER] ${message}`, data?.duration || 0, data);
+        console.warn(...args);
         break;
       default:
-        await logger.info(`[RENDERER] ${message}`, data);
+        console.log(...args);
+        break;
     }
-    
+
     return true;
   } catch (error) {
-    // Silently fail to avoid logging loops
+    // Ensure any failure here does not create an infinite logging loop.
     return false;
   }
 });
@@ -1849,8 +1781,8 @@ app.on('window-all-closed', async () => {
   }
 });
 
-app.on('activate', () => {
-  if (BrowserWindow.getAllWindows().length === 0) {
-    createWindow();
-  }
-});
+    app.on('activate', () => {
+      if (BrowserWindow.getAllWindows().length === 0) {
+        createWindow();
+      }
+    });

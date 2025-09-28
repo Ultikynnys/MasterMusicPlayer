@@ -65,10 +65,6 @@ class Logger {
     this.sendToRenderer('system', `SYSTEM: ${event}`, details);
   }
 
-  async performance(operation, duration, details = null) {
-    this.sendToRenderer('performance', `PERFORMANCE: ${operation} completed in ${duration}ms`, details);
-  }
-
   async crash(error, context = null) {
     const crashData = {
       errorMessage: error.message,

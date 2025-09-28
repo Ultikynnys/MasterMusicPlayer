@@ -1363,13 +1363,6 @@ input[type="range"]::-moz-range-thumb:hover {
   text-shadow: var(--theme-text-shadow);
 }
 
-/* Button Disabled States */
-
-/* ------------------------------------------------------------------
-   Performance-friendly overrides (added 2025-07-21)
-   ------------------------------------------------------------------*/
-
-/* Combined track and playlist styling */
 :is(.track-item, .playlist-item) {
   display: flex;
   align-items: center;
