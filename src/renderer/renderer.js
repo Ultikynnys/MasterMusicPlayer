@@ -1104,6 +1104,7 @@ function setupAudioEventListeners() {
   // Throttled UI updates for playback progress
 let lastUIUpdate = 0;
 const UI_UPDATE_INTERVAL = 250; // ms – 4 fps is plenty for time/progress display
+let lastBroadcastSync = 0; // throttle remote sync to ~1 Hz
 
   audioElement.ontimeupdate = () => {
     // Throttled save of playback position
@@ -1119,6 +1120,12 @@ const UI_UPDATE_INTERVAL = 250; // ms – 4 fps is plenty for time/progress disp
       lastSaveTime = now;
       savePlaybackState();
     }
+
+    // Throttle broadcast sync to keep remote time aligned
+    if (now - lastBroadcastSync > 1000) {
+      lastBroadcastSync = now;
+      try { updateBroadcastState(); } catch (_) {}
+    }
   };
 
   audioElement.onended = () => {
@@ -1132,6 +1139,11 @@ const UI_UPDATE_INTERVAL = 250; // ms – 4 fps is plenty for time/progress disp
     } else {
       playNext();
     }
+  };
+
+  // Notify broadcast on any seek (mouse, keyboard, programmatic)
+  audioElement.onseeked = () => {
+    try { updateBroadcastState({ action: 'seek' }); } catch (_) {}
   };
 
   audioElement.onerror = () => {
@@ -1493,6 +1505,7 @@ async function deleteBackup(backupPath) {
 }
 
 // Event listeners
+let isSeekDragging = false; // shared between UI handlers and audioElement.onseeked
 function setupEventListeners() {
   // Player controls
   if (elements.playPauseBtn) elements.playPauseBtn.addEventListener('click', togglePlayPause);
@@ -1500,12 +1513,46 @@ function setupEventListeners() {
   if (elements.nextBtn) elements.nextBtn.addEventListener('click', playNext);
   if (elements.repeatBtn) elements.repeatBtn.addEventListener('click', toggleRepeat);
   if (elements.shuffleBtn) elements.shuffleBtn.addEventListener('click', toggleShuffle);
+  // Throttle broadcasting of seek events while dragging to avoid flooding
+  let lastSeekBroadcast = 0;
+  let seekBroadcastTimer = null;
+  function scheduleSeekBroadcast() {
+    const now = Date.now();
+    const THROTTLE = 250; // 4 per second
+    if (now - lastSeekBroadcast >= THROTTLE) {
+      lastSeekBroadcast = now;
+      try { updateBroadcastState({ action: 'seek' }); } catch (_) {}
+    } else {
+      if (seekBroadcastTimer) clearTimeout(seekBroadcastTimer);
+      seekBroadcastTimer = setTimeout(() => {
+        lastSeekBroadcast = Date.now();
+        try { updateBroadcastState({ action: 'seek' }); } catch (_) {}
+      }, THROTTLE - (now - lastSeekBroadcast));
+    }
+  }
+
+  if (elements.progressSlider) {
+    elements.progressSlider.addEventListener('mousedown', () => { isSeekDragging = true; });
+    elements.progressSlider.addEventListener('touchstart', () => { isSeekDragging = true; }, { passive: true });
+    elements.progressSlider.addEventListener('mouseup', () => { isSeekDragging = false; });
+    elements.progressSlider.addEventListener('mouseleave', () => { isSeekDragging = false; });
+    elements.progressSlider.addEventListener('touchend', () => { isSeekDragging = false; });
+    elements.progressSlider.addEventListener('touchcancel', () => { isSeekDragging = false; });
+  }
+
   if (elements.progressSlider) elements.progressSlider.addEventListener('input', (e) => {
     if (audioElement) {
       audioElement.currentTime = e.target.value;
-      // Notify broadcast server immediately on seek
-      try { updateBroadcastState(); } catch (_) {}
+      // Throttled broadcast while dragging
+      scheduleSeekBroadcast();
     }
+  });
+  if (elements.progressSlider) elements.progressSlider.addEventListener('change', () => {
+    // Final broadcast on release
+    if (seekBroadcastTimer) { clearTimeout(seekBroadcastTimer); seekBroadcastTimer = null; }
+    lastSeekBroadcast = Date.now();
+    isSeekDragging = false;
+    try { updateBroadcastState({ action: 'seek' }); } catch (_) {}
   });
   if (elements.volumeSlider) elements.volumeSlider.addEventListener('input', async (e) => {
     globalVolume = e.target.value / 100;
@@ -2693,7 +2740,7 @@ function updateBroadcastStatus(isRunning, url) {
   }
 }
 
-function updateBroadcastState() {
+function updateBroadcastState(extra = {}) {
   try {
     const broadcastState = {
       track: currentTrack ? {
@@ -2714,7 +2761,8 @@ function updateBroadcastState() {
       } : null,
       repeat: isRepeat,
       shuffle: isShuffle,
-      timestamp: Date.now() // Add server timestamp for synchronization
+      timestamp: Date.now(), // Add server timestamp for synchronization
+      ...extra
     };
 
     // Send to main process for broadcast

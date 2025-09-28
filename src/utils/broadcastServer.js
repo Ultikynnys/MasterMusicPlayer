@@ -49,7 +49,11 @@ class BroadcastServer extends EventEmitter {
       port: 4583,
       publicHost: '',
       requireToken: true,
-      accessToken: ''
+      accessToken: '',
+      // Security options
+      allowedIps: [],            // e.g. ["127.0.0.1", "192.168.1.0/24"] (CIDR not parsed yet, exact IPs supported)
+      trustProxy: false,         // if true, use X-Forwarded-For for client IP
+      hsts: false                // add HSTS header when serving behind TLS/reverse proxy
     };
     this.currentState = {
       track: null,
@@ -62,7 +66,11 @@ class BroadcastServer extends EventEmitter {
       shuffle: false
     };
     this.clients = new Set();
+    this.sseClients = new Set(); // Set<http.ServerResponse>
     this.themeConfig = {};
+    // Basic rate limiting (per IP)
+    this.rateLimit = new Map();
+    this.rateLimitConfig = { windowMs: 60_000, max: 120 };
   }
 
   /**
@@ -91,7 +99,6 @@ class BroadcastServer extends EventEmitter {
             reject(err);
             return;
           }
-
           this.isRunning = true;
           logger.info(`Broadcast server started on ${this.config.host}:${this.config.port}`);
           this.emit('started', { host: this.config.host, port: this.config.port });
@@ -123,6 +130,9 @@ class BroadcastServer extends EventEmitter {
         this.isRunning = false;
         this.server = null;
         this.clients.clear();
+        // Close and clear SSE clients
+        for (const res of this.sseClients) { try { res.end(); } catch (_) {} }
+        this.sseClients.clear();
         logger.info('Broadcast server stopped');
         this.emit('stopped');
         resolve(true);
@@ -161,7 +171,9 @@ class BroadcastServer extends EventEmitter {
       this.stop();
     }
 
-    logger.info('Broadcast server config updated', { config: this.config });
+    // Avoid leaking access token in logs
+    const sanitized = { ...this.config, accessToken: this.config.accessToken ? '[redacted]' : '' };
+    logger.info('Broadcast server config updated', { config: sanitized });
     return this.config;
   }
 
@@ -177,8 +189,14 @@ class BroadcastServer extends EventEmitter {
    */
   updateState(newState) {
     this.currentState = { ...this.currentState, ...newState };
+    // Record ephemeral action timestamp for fallbacks (heartbeat)
+    if (newState && newState.action) {
+      this.currentState.action = newState.action;
+      this.currentState.actionAt = Date.now();
+    }
     this.broadcastStateUpdate();
-    logger.debug('Broadcast state updated', this.currentState);
+    // Log only sanitized state to avoid leaking paths
+    logger.debug('Broadcast state updated (public)', this.buildPublicState());
   }
 
   /**
@@ -197,13 +215,47 @@ class BroadcastServer extends EventEmitter {
 
     const stateData = JSON.stringify({
       type: 'state_update',
-      data: this.currentState,
+      data: this.buildPublicState(),
       timestamp: Date.now()
     });
 
     // In a real implementation, you'd send this to WebSocket clients
     // For now, we'll just emit an event
     this.emit('state_update', this.currentState);
+
+    // Push to SSE clients immediately
+    const payload = `event: state_update\n` +
+                    `data: ${stateData}\n\n`;
+    for (const res of this.sseClients) {
+      try { res.write(payload); } catch (_) {}
+    }
+  }
+
+  // Return a sanitized, minimal state suitable for public clients
+  buildPublicState() {
+    const s = this.currentState || {};
+    const serverNow = Date.now();
+    const baseTs = (typeof s.timestamp === 'number') ? s.timestamp : serverNow;
+    const effectiveCurrent = (s.currentTime || 0) + (s.isPlaying ? Math.max(0, (serverNow - baseTs) / 1000) : 0);
+    const ephemeralAction = (s.action && (serverNow - (s.actionAt || 0) < 10000)) ? s.action : null;
+    const t = s.track ? {
+      id: s.track.id,
+      name: s.track.name,
+      artist: s.track.artist || 'Unknown Artist',
+      duration: s.track.duration || 0,
+      volume: typeof s.track.volume === 'number' ? s.track.volume : 1
+    } : null;
+    return {
+      track: t,
+      isPlaying: !!s.isPlaying,
+      currentTime: effectiveCurrent,
+      duration: s.duration || 0,
+      playlistName: s.playlist && s.playlist.name ? s.playlist.name : null,
+      repeat: !!s.repeat,
+      shuffle: !!s.shuffle,
+      timestamp: serverNow,
+      action: ephemeralAction
+    };
   }
 
   /**
@@ -229,9 +281,13 @@ class BroadcastServer extends EventEmitter {
     }
 
     const url = new URL(req.url, `http://${req.headers.host}`);
-    const token = url.searchParams.get('token');
-    
-    return token === this.config.accessToken;
+    let token = url.searchParams.get('token');
+    // Also support Authorization: Bearer <token>
+    if (!token && typeof req.headers['authorization'] === 'string') {
+      const m = /^(?:Bearer)\s+(.+)$/i.exec(req.headers['authorization']);
+      if (m) token = m[1];
+    }
+    return !!token && token === this.config.accessToken;
   }
 
   /**
@@ -242,19 +298,44 @@ class BroadcastServer extends EventEmitter {
       const url = new URL(req.url, `http://${req.headers.host}`);
       const pathname = url.pathname;
 
-      // Set CORS headers
-      res.setHeader('Access-Control-Allow-Origin', '*');
-      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-      res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-
+      // Short-circuit OPTIONS requests (no permissive CORS by default; same-origin is used)
       if (req.method === 'OPTIONS') {
-        res.writeHead(200);
+        res.writeHead(204);
         res.end();
         return;
       }
 
-      // Validate token if required
-      if (!this.validateToken(req)) {
+      // Serve public static assets EARLY (no token/IP/rate-limit required)
+      const p = pathname.toLowerCase();
+      if (p === '/favicon.ico' || p === '/assets/logo' || p === '/assets/logo/' || p === '/assets/logo.png' || p === '/assets/icon' || p === '/assets/icon/' || p === '/assets/icon.png') {
+        if (p.includes('logo')) {
+          await this.serveLogo(req, res);
+        } else {
+          await this.serveIcon(req, res);
+        }
+        return;
+      }
+
+      // IP allowlist (if configured)
+      const clientIp = this.getClientIp(req);
+      if (Array.isArray(this.config.allowedIps) && this.config.allowedIps.length > 0) {
+        if (!this.config.allowedIps.includes(clientIp)) {
+          res.writeHead(403, { 'Content-Type': 'application/json', ...this.getSecurityHeaders('application/json') });
+          res.end(JSON.stringify({ error: 'Forbidden' }));
+          return;
+        }
+      }
+
+      // Rate limit (skip for audio streaming to prevent stutter)
+      if (pathname !== '/api/audio' && this.isRateLimited(clientIp)) {
+        res.writeHead(429, { 'Content-Type': 'application/json', ...this.getSecurityHeaders('application/json') });
+        res.end(JSON.stringify({ error: 'Too many requests' }));
+        return;
+      }
+
+      // Validate token unless requesting public static assets
+      const isPublicAsset = (pathname === '/favicon.ico' || pathname.startsWith('/assets/'));
+      if (!isPublicAsset && !this.validateToken(req)) {
         res.writeHead(401, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Invalid or missing access token' }));
         return;
@@ -264,6 +345,9 @@ class BroadcastServer extends EventEmitter {
       switch (pathname) {
         case '/':
           await this.serveNowPlayingPage(req, res);
+          break;
+        case '/api/events':
+          await this.serveEvents(req, res);
           break;
         case '/api/state':
           await this.serveCurrentState(req, res);
@@ -277,19 +361,17 @@ class BroadcastServer extends EventEmitter {
         case '/api/theme':
           await this.serveThemeConfig(req, res);
           break;
-        case '/assets/logo':
-          await this.serveLogo(req, res);
+        case '/api/ping':
+          await this.servePing(req, res);
           break;
-        case '/assets/icon':
-          await this.serveIcon(req, res);
-          break;
+        // (assets already handled early)
         default:
-          res.writeHead(404, { 'Content-Type': 'text/plain' });
+          res.writeHead(404, { 'Content-Type': 'text/plain', ...this.getSecurityHeaders('text/plain') });
           res.end('Not Found');
       }
     } catch (error) {
       logger.error('Error handling broadcast request', error);
-      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.writeHead(500, { 'Content-Type': 'application/json', ...this.getSecurityHeaders('application/json') });
       res.end(JSON.stringify({ error: 'Internal server error' }));
     }
   }
@@ -299,18 +381,62 @@ class BroadcastServer extends EventEmitter {
    */
   async serveNowPlayingPage(req, res) {
     const html = this.generateNowPlayingHTML();
-    res.writeHead(200, { 'Content-Type': 'text/html' });
+    res.writeHead(200, { 'Content-Type': 'text/html', 'Cache-Control': 'no-store', ...this.getSecurityHeaders('text/html') });
     res.end(html);
+  }
+
+  /**
+   * Server-Sent Events endpoint for realtime state updates
+   */
+  async serveEvents(req, res) {
+    // Only GET allowed
+    if (req.method !== 'GET') {
+      res.writeHead(405, { 'Content-Type': 'application/json', ...this.getSecurityHeaders('application/json') });
+      res.end(JSON.stringify({ error: 'Method not allowed' }));
+      return;
+    }
+
+    // SSE headers
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
+      'Connection': 'keep-alive',
+      ...this.getSecurityHeaders('text/event-stream')
+    });
+
+    // Register client
+    this.sseClients.add(res);
+
+    // Send initial event with current state
+    const stateData = JSON.stringify({
+      type: 'state_update',
+      data: this.buildPublicState(),
+      timestamp: Date.now()
+    });
+    res.write(`event: state_update\n`);
+    res.write(`data: ${stateData}\n\n`);
+
+    // Keep-alive ping comments
+    const ka = setInterval(() => {
+      try { res.write(`: ping\n\n`); } catch (_) {}
+    }, 25000);
+
+    // Cleanup on close
+    req.on('close', () => {
+      clearInterval(ka);
+      this.sseClients.delete(res);
+      try { res.end(); } catch (_) {}
+    });
   }
 
   /**
    * Serve current playback state as JSON
    */
   async serveCurrentState(req, res) {
-    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', ...this.getSecurityHeaders('application/json') });
     res.end(JSON.stringify({
       success: true,
-      data: this.currentState,
+      data: this.buildPublicState(),
       timestamp: Date.now()
     }));
   }
@@ -321,17 +447,17 @@ class BroadcastServer extends EventEmitter {
   async handleHeartbeat(req, res) {
     // Only accept GET requests for heartbeat
     if (req.method !== 'GET') {
-      res.writeHead(405, { 'Content-Type': 'application/json' });
+      res.writeHead(405, { 'Content-Type': 'application/json', ...this.getSecurityHeaders('application/json') });
       res.end(JSON.stringify({ error: 'Method not allowed' }));
       return;
     }
 
     // Return current state with heartbeat response
-    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', ...this.getSecurityHeaders('application/json') });
     res.end(JSON.stringify({
       success: true,
       type: 'heartbeat',
-      data: this.currentState,
+      data: this.buildPublicState(),
       timestamp: Date.now()
     }));
   }
@@ -340,6 +466,12 @@ class BroadcastServer extends EventEmitter {
    * Serve audio stream for the current track
    */
   async serveAudioStream(req, res) {
+    // Allow only GET and HEAD to stream audio
+    if (req.method !== 'GET' && req.method !== 'HEAD') {
+      res.writeHead(405, { 'Content-Type': 'application/json', ...this.getSecurityHeaders('application/json') });
+      res.end(JSON.stringify({ error: 'Method not allowed' }));
+      return;
+    }
     if (!this.currentState.track || !this.currentState.track.filePath) {
       res.writeHead(404, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'No track currently playing' }));
@@ -359,7 +491,19 @@ class BroadcastServer extends EventEmitter {
       const fileSize = stat.size;
       const range = req.headers.range;
 
-      if (range) {
+      if (req.method === 'HEAD') {
+        // Send only headers for current full file (no body)
+        res.writeHead(200, {
+          'Content-Length': fileSize,
+          'Content-Type': 'audio/mpeg',
+          'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
+          'Pragma': 'no-cache',
+          'Expires': '0',
+          'Content-Disposition': 'inline; filename="track.mp3"',
+          ...this.getSecurityHeaders('audio/mpeg')
+        });
+        res.end();
+      } else if (range) {
         // Handle range requests for seeking
         const parts = range.replace(/bytes=/, "").split("-");
         const start = parseInt(parts[0], 10);
@@ -375,7 +519,9 @@ class BroadcastServer extends EventEmitter {
           'Content-Type': 'audio/mpeg',
           'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
           'Pragma': 'no-cache',
-          'Expires': '0'
+          'Expires': '0',
+          'Content-Disposition': 'inline; filename="track.mp3"',
+          ...this.getSecurityHeaders('audio/mpeg')
         });
         
         stream.pipe(res);
@@ -386,7 +532,9 @@ class BroadcastServer extends EventEmitter {
           'Content-Type': 'audio/mpeg',
           'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
           'Pragma': 'no-cache',
-          'Expires': '0'
+          'Expires': '0',
+          'Content-Disposition': 'inline; filename="track.mp3"',
+          ...this.getSecurityHeaders('audio/mpeg')
         });
         
         const stream = fs.createReadStream(filePath);
@@ -394,7 +542,7 @@ class BroadcastServer extends EventEmitter {
       }
     } catch (error) {
       logger.error('Error serving audio stream', error);
-      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.writeHead(500, { 'Content-Type': 'application/json', ...this.getSecurityHeaders('application/json') });
       res.end(JSON.stringify({ error: 'Failed to serve audio' }));
     }
   }
@@ -404,7 +552,7 @@ class BroadcastServer extends EventEmitter {
    * Serve theme configuration
    */
   async serveThemeConfig(req, res) {
-    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', ...this.getSecurityHeaders('application/json') });
     res.end(JSON.stringify({
       success: true,
       theme: this.themeConfig
@@ -412,28 +560,56 @@ class BroadcastServer extends EventEmitter {
   }
 
   /**
+   * Lightweight ping endpoint for RTT measurement
+   */
+  async servePing(req, res) {
+    // GET only
+    if (req.method !== 'GET') {
+      res.writeHead(405, { 'Content-Type': 'application/json', ...this.getSecurityHeaders('application/json') });
+      res.end(JSON.stringify({ error: 'Method not allowed' }));
+      return;
+    }
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', ...this.getSecurityHeaders('application/json') });
+    res.end(JSON.stringify({ success: true, serverTime: Date.now() }));
+  }
+
+  /**
    * Serve application logo
    */
   async serveLogo(req, res) {
     try {
-      const logoPath = path.join(__dirname, '..', '..', 'assets', 'logo.png');
-      
-      if (!await fs.pathExists(logoPath)) {
+      const candidates = [
+        path.join(__dirname, '..', 'renderer', 'assets', 'MMP_Logo.png'),
+        path.join(__dirname, '..', 'renderer', 'assets', 'MMP_Banner.png'),
+        path.join(__dirname, '..', 'renderer', 'assets', 'icon.png'),
+        // packaged locations
+        process.resourcesPath ? path.join(process.resourcesPath, 'app.asar', 'src', 'renderer', 'assets', 'MMP_Logo.png') : '',
+        process.resourcesPath ? path.join(process.resourcesPath, 'app.asar', 'src', 'renderer', 'assets', 'MMP_Banner.png') : '',
+        process.resourcesPath ? path.join(process.resourcesPath, 'app.asar', 'src', 'renderer', 'assets', 'icon.png') : '',
+        process.resourcesPath ? path.join(process.resourcesPath, 'app.asar.unpacked', 'src', 'renderer', 'assets', 'MMP_Logo.png') : '',
+        process.resourcesPath ? path.join(process.resourcesPath, 'app.asar.unpacked', 'src', 'renderer', 'assets', 'MMP_Banner.png') : '',
+        process.resourcesPath ? path.join(process.resourcesPath, 'app.asar.unpacked', 'src', 'renderer', 'assets', 'icon.png') : ''
+      ].filter(Boolean);
+      let found = '';
+      for (const p of candidates) { if (await fs.pathExists(p)) { found = p; break; } }
+      if (!found) {
         res.writeHead(404, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Logo not found' }));
         return;
       }
 
-      const logoBuffer = await fs.readFile(logoPath);
+      const logoBuffer = await fs.readFile(found);
       res.writeHead(200, { 
         'Content-Type': 'image/png',
         'Content-Length': logoBuffer.length,
-        'Cache-Control': 'public, max-age=3600'
+        // Cache for 7 days
+        'Cache-Control': 'public, max-age=604800, immutable',
+        ...this.getSecurityHeaders('image/png')
       });
       res.end(logoBuffer);
     } catch (error) {
       logger.error('Error serving logo', error);
-      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.writeHead(500, { 'Content-Type': 'application/json', ...this.getSecurityHeaders('application/json') });
       res.end(JSON.stringify({ error: 'Failed to serve logo' }));
     }
   }
@@ -443,26 +619,85 @@ class BroadcastServer extends EventEmitter {
    */
   async serveIcon(req, res) {
     try {
-      const iconPath = path.join(__dirname, '..', '..', 'assets', 'icon.png');
-      
-      if (!await fs.pathExists(iconPath)) {
+      const candidates = [
+        path.join(__dirname, '..', 'renderer', 'assets', 'icon.png'),
+        path.join(__dirname, '..', 'renderer', 'assets', 'MMP_Logo.png'),
+        // packaged locations
+        process.resourcesPath ? path.join(process.resourcesPath, 'app.asar', 'src', 'renderer', 'assets', 'icon.png') : '',
+        process.resourcesPath ? path.join(process.resourcesPath, 'app.asar', 'src', 'renderer', 'assets', 'MMP_Logo.png') : '',
+        process.resourcesPath ? path.join(process.resourcesPath, 'app.asar.unpacked', 'src', 'renderer', 'assets', 'icon.png') : '',
+        process.resourcesPath ? path.join(process.resourcesPath, 'app.asar.unpacked', 'src', 'renderer', 'assets', 'MMP_Logo.png') : ''
+      ].filter(Boolean);
+      let found = '';
+      for (const p of candidates) { if (await fs.pathExists(p)) { found = p; break; } }
+      if (!found) {
         res.writeHead(404, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Icon not found' }));
         return;
       }
 
-      const iconBuffer = await fs.readFile(iconPath);
+      const iconBuffer = await fs.readFile(found);
       res.writeHead(200, { 
         'Content-Type': 'image/png',
         'Content-Length': iconBuffer.length,
-        'Cache-Control': 'public, max-age=3600'
+        // Cache for 7 days
+        'Cache-Control': 'public, max-age=604800, immutable',
+        ...this.getSecurityHeaders('image/png')
       });
       res.end(iconBuffer);
     } catch (error) {
       logger.error('Error serving icon', error);
-      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.writeHead(500, { 'Content-Type': 'application/json', ...this.getSecurityHeaders('application/json') });
       res.end(JSON.stringify({ error: 'Failed to serve icon' }));
     }
+  }
+
+  // --- Security helpers ---
+  getClientIp(req) {
+    try {
+      if (this.config.trustProxy) {
+        const xff = req.headers['x-forwarded-for'];
+        if (xff) {
+          const first = String(xff).split(',')[0].trim();
+          return first.startsWith('::ffff:') ? first.slice(7) : (first === '::1' ? '127.0.0.1' : first);
+        }
+      }
+      const ra = req.socket?.remoteAddress || '';
+      if (!ra) return '';
+      if (ra.startsWith('::ffff:')) return ra.slice(7);
+      if (ra === '::1') return '127.0.0.1';
+      return ra;
+    } catch { return ''; }
+  }
+
+  isRateLimited(ip) {
+    if (!ip) return false;
+    const now = Date.now();
+    const windowMs = this.rateLimitConfig.windowMs;
+    const max = this.rateLimitConfig.max;
+    let entry = this.rateLimit.get(ip);
+    if (!entry || now - entry.start > windowMs) {
+      entry = { start: now, count: 0 };
+      this.rateLimit.set(ip, entry);
+    }
+    entry.count++;
+    return entry.count > max;
+  }
+
+  getSecurityHeaders(contentType = 'text/plain') {
+    const headers = {
+      'X-Content-Type-Options': 'nosniff',
+      'X-Frame-Options': 'DENY',
+      'Referrer-Policy': 'no-referrer'
+    };
+    // Add CSP for HTML pages
+    if (contentType.includes('text/html')) {
+      headers['Content-Security-Policy'] = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'none'; object-src 'none'";
+    }
+    if (this.config.hsts) {
+      headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains; preload';
+    }
+    return headers;
   }
 
   /**
@@ -495,6 +730,7 @@ class BroadcastServer extends EventEmitter {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Now Playing - Master Music Player</title>
+    <link rel="icon" type="image/png" href="/assets/icon.png">
     <style>
         * {
             margin: 0;
@@ -508,9 +744,46 @@ class BroadcastServer extends EventEmitter {
             color: ${textColor};
             min-height: 100vh;
             display: flex;
+            flex-direction: column;
             align-items: center;
-            justify-content: center;
+            justify-content: flex-start;
         }
+
+        /* Top application banner */
+        .banner {
+            position: sticky;
+            top: 0;
+            width: 100%;
+            background: ${surfaceColor};
+            border-bottom: 1px solid ${borderColor};
+            z-index: 5;
+        }
+        .banner-inner {
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 0.75rem 1rem;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 0.75rem;
+            font-weight: 700;
+            font-size: 1.25rem;
+        }
+        .banner-title { display: flex; align-items: center; gap: 0.75rem; }
+        .banner-inner img { width: 28px; height: 28px; border-radius: 6px; }
+        .banner-actions .link {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.4rem;
+            padding: 0.35rem 0.75rem;
+            border-radius: 6px;
+            background: ${containerColor};
+            border: 1px solid ${borderColor};
+            color: ${textColor};
+            text-decoration: none;
+            font-weight: 600;
+        }
+        .banner-actions .link:hover { background: ${secondaryHover}; }
         
         .container {
             text-align: center;
@@ -520,24 +793,10 @@ class BroadcastServer extends EventEmitter {
             border: 1px solid ${borderColor};
             border-radius: 8px;
             box-shadow: none;
+            margin-top: 1.5rem;
         }
         
-        .logo {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 1rem;
-            font-size: 2rem;
-            font-weight: bold;
-            margin-bottom: 2rem;
-            opacity: 0.9;
-        }
-        
-        .logo img {
-            width: 48px;
-            height: 48px;
-            border-radius: 8px;
-        }
+        /* legacy in-card logo removed */
         
         .track-info {
             margin-bottom: 2rem;
@@ -548,6 +807,19 @@ class BroadcastServer extends EventEmitter {
             font-weight: 600;
             margin-bottom: 0.5rem;
             word-break: break-word;
+        }
+        
+        .track-artist {
+            font-size: 1.1rem;
+            opacity: 0.8;
+            margin-top: -0.25rem;
+            margin-bottom: 0.75rem;
+        }
+        
+        .playlist-name {
+            font-size: 0.95rem;
+            opacity: 0.7;
+            margin-bottom: 0.75rem;
         }
         
         .status {
@@ -562,6 +834,40 @@ class BroadcastServer extends EventEmitter {
             margin-bottom: 1rem;
             font-family: monospace;
         }
+        
+        .buffer-status { margin-bottom: 1rem; }
+        .buffer-container {
+            width: 100%;
+            max-width: 400px;
+            height: 6px;
+            background: ${containerColor};
+            border-radius: 3px;
+            overflow: hidden;
+            margin: 0.25rem auto 0.35rem auto;
+        }
+        .buffer-fill {
+            height: 100%;
+            width: 0%;
+            background: ${lightenColor(primaryColor, -25)};
+            transition: width 120ms linear;
+        }
+        .buffer-text { font-size: 0.9rem; opacity: 0.75; }
+        
+        .net-info {
+            margin: 0.25rem auto 1rem auto;
+            font-size: 0.9rem;
+            opacity: 0.75;
+        }
+        
+        .time-diff {
+            margin: 0.25rem auto 0.5rem auto;
+            font-size: 0.85rem;
+            opacity: 0.7;
+            font-family: monospace;
+        }
+        .time-diff.sync { color: #10b981; }
+        .time-diff.drift { color: #f59e0b; }
+        .time-diff.desync { color: #ef4444; }
         
         .controls {
             display: flex;
@@ -680,14 +986,23 @@ class BroadcastServer extends EventEmitter {
     </style>
 </head>
 <body>
-    <div class="container">
-        <div class="logo">
-            <img src="/assets/logo" alt="Master Music Player" onerror="this.style.display='none'">
-            Master Music Player
+    <div class="banner">
+        <div class="banner-inner">
+            <div class="banner-title">
+                <img src="/assets/logo" alt="Master Music Player" onerror="this.style.display='none'">
+                Master Music Player
+            </div>
+            <div class="banner-actions">
+                <a class="link github-link" href="https://github.com/Ultikynnys/MasterMusicPlayer" target="_blank" rel="noopener">GitHub</a>
+            </div>
         </div>
+    </div>
+    <div class="container">
         
         <div class="track-info">
             <div class="track-name" id="track-name">${trackName}</div>
+            <div class="track-artist" id="track-artist">${track && track.artist ? track.artist : ''}</div>
+            <div class="playlist-name" id="playlist-name">${this.currentState.playlist && this.currentState.playlist.name ? this.currentState.playlist.name : ''}</div>
             <div class="status">
                 <span class="status-indicator ${isPlaying ? 'status-playing' : 'status-paused'}" id="status-indicator"></span>
                 <span id="status-text">${isPlaying ? 'Playing' : 'Paused'}</span>
@@ -697,6 +1012,12 @@ class BroadcastServer extends EventEmitter {
                 <span> / </span>
                 <span id="total-time">0:00</span>
             </div>
+            <div class="buffer-status">
+                <div class="buffer-container"><div class="buffer-fill" id="buffer-fill"></div></div>
+                <div class="buffer-text" id="buffer-text">Buffered: 0%</div>
+            </div>
+            <div class="net-info" id="net-info">Ping: -- ms • Drift threshold: -- s</div>
+            <div class="time-diff" id="time-diff">Time diff: -- s</div>
         </div>
         
         <div class="controls">
@@ -732,9 +1053,19 @@ class BroadcastServer extends EventEmitter {
         let lastUpdateTime = 0;
         let isConnected = false;
         let audioPlayer = null;
-        let currentTrackId = null;
+        let currentTrackId = null; // string form for stable comparison
+        let currentAudioUrl = '';
+        let lastTrackChangeAt = 0;
         let deviceVolume = 1; // local slider volume (0..1), independent from app master
         let trackVolume = ${this.currentState.track && typeof this.currentState.track.volume === 'number' ? this.currentState.track.volume : 1}; // per-track (0..1)
+        // Dynamic sync: full RTT + padding
+        let pingRttMs = 0;
+        const DRIFT_PADDING_SECONDS = 2.0;
+        function getSyncDriftThreshold() {
+            const base = pingRttMs > 0 ? (pingRttMs / 1000) : 0;
+            const thr = base + DRIFT_PADDING_SECONDS;
+            return Math.max(1.0, thr);
+        }
         
         // Get token from URL
         const urlParams = new URLSearchParams(window.location.search);
@@ -767,8 +1098,188 @@ class BroadcastServer extends EventEmitter {
             audioPlayer.volume = v;
         }
         
+        // Last known server state for UI clock
+        let uiBaseCurrent = 0;
+        let uiBaseTimestamp = 0;
+        let uiIsPlaying = false;
+        let uiDuration = 0;
+        let lastServerTime = 0;
+        let lastLocalTime = 0;
+
+        function updateUiClock() {
+            try {
+                if (uiBaseTimestamp === 0) return;
+                const elapsed = uiIsPlaying ? (Date.now() - uiBaseTimestamp) / 1000 : 0;
+                let t = uiBaseCurrent + elapsed;
+                if (uiDuration > 0) t = Math.min(t, uiDuration);
+                lastLocalTime = t;
+                document.getElementById('current-time').textContent = formatTime(t);
+                if (uiDuration > 0) document.getElementById('total-time').textContent = formatTime(uiDuration);
+                updateTimeDiff();
+            } catch (_) {}
+        }
+        setInterval(updateUiClock, 250);
+
+        function updateTimeDiff() {
+            try {
+                const el = document.getElementById('time-diff');
+                if (!el || !audioPlayer || !isConnected) return;
+                
+                const serverTime = lastServerTime;
+                const localTime = audioPlayer.currentTime || 0;
+                const diff = Math.abs(serverTime - localTime);
+                
+                el.textContent = 'Time diff: ' + diff.toFixed(2) + ' s';
+                
+                // Color coding based on drift
+                el.className = 'time-diff';
+                if (diff < 0.5) {
+                    el.classList.add('sync');
+                } else if (diff < getSyncDriftThreshold()) {
+                    el.classList.add('drift');
+                } else {
+                    el.classList.add('desync');
+                }
+            } catch (_) {}
+        }
+
+        // Update buffered progress UI using media buffered ranges
+        function updateBufferUI() {
+            try {
+                const fill = document.getElementById('buffer-fill');
+                const text = document.getElementById('buffer-text');
+                if (!audioPlayer || !fill || !text) return;
+                const dur = audioPlayer.duration;
+                let pct = 0;
+                if (isFinite(dur) && dur > 0 && audioPlayer.buffered && audioPlayer.buffered.length) {
+                    const end = audioPlayer.buffered.end(audioPlayer.buffered.length - 1);
+                    pct = Math.max(0, Math.min(100, (end / dur) * 100));
+                }
+                fill.style.width = pct.toFixed(1) + '%';
+                text.textContent = 'Buffered: ' + pct.toFixed(0) + '%';
+            } catch (_) {}
+        }
+
+        // Measure RTT to server and update UI + threshold
+        async function measurePing() {
+            try {
+                const t0 = performance.now();
+                const res = await fetch(getApiUrl('/api/ping', { nonce: Date.now() }));
+                await res.json();
+                const t1 = performance.now();
+                pingRttMs = Math.max(0, t1 - t0);
+                const el = document.getElementById('net-info');
+                if (el) {
+                    el.textContent = 'Ping: ' + Math.round(pingRttMs) + ' ms • Drift threshold: ' + getSyncDriftThreshold().toFixed(2) + ' s';
+                }
+            } catch (_) {
+                const el = document.getElementById('net-info');
+                if (el) el.textContent = 'Ping: -- ms • Drift threshold: ' + getSyncDriftThreshold().toFixed(2) + ' s';
+            }
+        }
+
+        // Unified handler for applying state updates (used by heartbeat & SSE)
+        function processUpdate(state, outerTimestamp, allowSync = true) {
+            // Update track info
+            document.getElementById('track-name').textContent = 
+                state.track ? state.track.name : 'No track playing';
+            document.getElementById('track-artist').textContent = 
+                (state.track && state.track.artist) ? state.track.artist : '';
+            const pn = (state.playlistName && typeof state.playlistName === 'string') ? state.playlistName : '';
+            document.getElementById('playlist-name').textContent = pn;
+            
+            // Update status
+            const statusIndicator = document.getElementById('status-indicator');
+            const statusText = document.getElementById('status-text');
+            if (state.isPlaying) {
+                statusIndicator.className = 'status-indicator status-playing';
+                statusText.textContent = 'Playing';
+            } else {
+                statusIndicator.className = 'status-indicator status-paused';
+                statusText.textContent = 'Paused';
+            }
+            
+            // Update progress info
+            const srcTs = (state && typeof state.timestamp === 'number') ? state.timestamp : outerTimestamp;
+            if (typeof state.currentTime === 'number' && typeof state.duration === 'number') {
+                const timeDiff = srcTs ? (Date.now() - srcTs) / 1000 : 0;
+                const currentTime = state.currentTime + (state.isPlaying ? timeDiff : 0);
+                document.getElementById('current-time').textContent = formatTime(currentTime);
+                document.getElementById('total-time').textContent = formatTime(state.duration);
+                // Update UI clock base for smooth display
+                uiBaseCurrent = typeof state.currentTime === 'number' ? state.currentTime : 0;
+                uiBaseTimestamp = srcTs || Date.now();
+                uiIsPlaying = !!state.isPlaying;
+                uiDuration = state.duration || 0;
+                lastServerTime = uiBaseCurrent;
+            }
+            
+            // Update audio player if connected
+            if (isConnected && audioPlayer && state.track) {
+                const incomingId = String(state.track.id);
+                const trackChanged = currentTrackId !== incomingId;
+                trackVolume = (state.track && typeof state.track.volume === 'number') ? state.track.volume : 1;
+                if (trackChanged && allowSync) {
+                    // Debounce track change handling to avoid rapid reload loops
+                    const nowTs = Date.now();
+                    if (nowTs - lastTrackChangeAt < 800) {
+                        return; // ignore rapid duplicate updates
+                    }
+                    lastTrackChangeAt = nowTs;
+                    currentTrackId = incomingId;
+                    const timeDiff = srcTs ? (Date.now() - srcTs) / 1000 : 0;
+                    const expectedTime = (state.currentTime || 0) + (state.isPlaying ? timeDiff : 0);
+                    const audioUrl = getApiUrl('/api/audio', { v: incomingId });
+                    if (currentAudioUrl !== audioUrl) {
+                        currentAudioUrl = audioUrl;
+                        audioPlayer.src = audioUrl;
+                        audioPlayer.load();
+                    }
+                    const onMeta = () => {
+                        audioPlayer.removeEventListener('loadedmetadata', onMeta);
+                        try { audioPlayer.currentTime = expectedTime; } catch (_) {}
+                        applyEffectiveVolume();
+                        updateBufferUI();
+                        if (state.isPlaying) {
+                            audioPlayer.play().catch(e => console.log('Playback failed:', e));
+                        }
+                    };
+                    audioPlayer.addEventListener('loadedmetadata', onMeta);
+                } else {
+                    // Same track - sync time and play/pause
+                    if (allowSync && typeof state.currentTime === 'number' && srcTs) {
+                        const timeDiff = (Date.now() - srcTs) / 1000;
+                        const expectedTime = state.currentTime + (state.isPlaying ? timeDiff : 0);
+                        // If this is an explicit seek/track change, always set time (both directions)
+                        if (state.action === 'seek' || state.action === 'track_change') {
+                            audioPlayer.currentTime = expectedTime;
+                        } else {
+                            // Otherwise correct only if drift significant in either direction
+                            const drift = expectedTime - audioPlayer.currentTime;
+                            if (Math.abs(drift) > getSyncDriftThreshold()) {
+                                audioPlayer.currentTime = expectedTime;
+                            }
+                        }
+                    }
+                    if (allowSync && state.isPlaying && audioPlayer.paused) {
+                        audioPlayer.play().catch(e => console.log('Playback failed:', e));
+                    } else if (allowSync && !state.isPlaying && !audioPlayer.paused) {
+                        audioPlayer.pause();
+                    }
+                    applyEffectiveVolume();
+                    updateBufferUI();
+                }
+            } else if (isConnected && audioPlayer && !state.track) {
+                currentTrackId = null;
+                audioPlayer.pause();
+                audioPlayer.src = '';
+                currentAudioUrl = '';
+            }
+        }
+        
         // Send heartbeat and update state
         async function sendHeartbeat() {
+            if (sseConnected) return; // avoid duplicate updates when SSE is live
             try {
                 const response = await fetch(getApiUrl('/api/heartbeat'));
                 const result = await response.json();
@@ -776,92 +1287,8 @@ class BroadcastServer extends EventEmitter {
                 if (result.success && result.timestamp > lastUpdateTime) {
                     lastUpdateTime = result.timestamp;
                     const state = result.data;
-                    
-                    // Update track info
-                    document.getElementById('track-name').textContent = 
-                        state.track ? state.track.name : 'No track playing';
-                    
-                    // Update status
-                    const statusIndicator = document.getElementById('status-indicator');
-                    const statusText = document.getElementById('status-text');
-                    
-                    if (state.isPlaying) {
-                        statusIndicator.className = 'status-indicator status-playing';
-                        statusText.textContent = 'Playing';
-                    } else {
-                        statusIndicator.className = 'status-indicator status-paused';
-                        statusText.textContent = 'Paused';
-                    }
-                    
-                    // Update progress info
-                    if (state.currentTime !== undefined && state.duration !== undefined) {
-                        const timeDiff = state.timestamp ? (Date.now() - state.timestamp) / 1000 : 0;
-                        const currentTime = state.currentTime + (state.isPlaying ? timeDiff : 0);
-                        
-                        document.getElementById('current-time').textContent = formatTime(currentTime);
-                        document.getElementById('total-time').textContent = formatTime(state.duration);
-                    }
-                    
-                    // Update audio player if connected
-                    if (isConnected && audioPlayer && state.track) {
-                        // Check if track has changed
-                        const trackChanged = currentTrackId !== state.track.id;
-                        // Update track volume from state
-                        trackVolume = (state.track && typeof state.track.volume === 'number') ? state.track.volume : 1;
-                        if (trackChanged) {
-                            currentTrackId = state.track.id;
-                            console.log('Track changed to:', state.track.name);
-                            
-                            // Compute expected sync time based on heartbeat timestamp
-                            const timeDiff = state.timestamp ? (Date.now() - state.timestamp) / 1000 : 0;
-                            const expectedTime = (state.currentTime || 0) + (state.isPlaying ? timeDiff : 0);
-                            
-                            // Force reload audio source for new track with cache-busting version
-                            const audioUrl = getApiUrl('/api/audio', { v: state.track.id });
-                            audioPlayer.src = audioUrl;
-                            audioPlayer.load(); // Force reload
-                            
-                            const onMeta = () => {
-                                audioPlayer.removeEventListener('loadedmetadata', onMeta);
-                                try { audioPlayer.currentTime = expectedTime; } catch (_) {}
-                                // Apply per-track volume before play
-                                applyEffectiveVolume();
-                                if (state.isPlaying) {
-                                    audioPlayer.play().catch(e => console.log('Playback failed:', e));
-                                }
-                            };
-                            audioPlayer.addEventListener('loadedmetadata', onMeta);
-                        } else {
-                            // Same track - just sync position and state
-                            
-                            // Sync playback position with timestamp compensation
-                            if (state.currentTime !== undefined && state.timestamp) {
-                                const timeDiff = (Date.now() - state.timestamp) / 1000; // Convert to seconds
-                                const expectedTime = state.currentTime + (state.isPlaying ? timeDiff : 0);
-                                
-                                // Only seek if the difference is significant (more than 2 seconds)
-                                if (Math.abs(audioPlayer.currentTime - expectedTime) > 2) {
-                                    audioPlayer.currentTime = expectedTime;
-                                    console.log('Synced audio position to:', expectedTime.toFixed(2), 's');
-                                }
-                            }
-                            
-                            // Sync playback state
-                            if (state.isPlaying && audioPlayer.paused) {
-                                audioPlayer.play().catch(e => console.log('Playback failed:', e));
-                            } else if (!state.isPlaying && !audioPlayer.paused) {
-                                audioPlayer.pause();
-                            }
-                            // Apply effective volume on same-track updates as well
-                            trackVolume = (state.track && typeof state.track.volume === 'number') ? state.track.volume : 1;
-                            applyEffectiveVolume();
-                        }
-                    } else if (isConnected && audioPlayer && !state.track) {
-                        // No track playing - clear current track
-                        currentTrackId = null;
-                        audioPlayer.pause();
-                        audioPlayer.src = '';
-                    }
+                    const allow = state && (state.action === 'seek' || state.action === 'track_change');
+                    processUpdate(state, result.timestamp, !!allow);
                 }
             } catch (error) {
                 console.error('Heartbeat failed:', error);
@@ -887,6 +1314,23 @@ class BroadcastServer extends EventEmitter {
                 audioPlayer.src = getApiUrl('/api/audio', { v: Date.now() });
                 audioPlayer.load();
                 applyEffectiveVolume();
+                updateBufferUI();
+                // Buffer progress listeners
+                try {
+                    audioPlayer.addEventListener('progress', updateBufferUI);
+                    audioPlayer.addEventListener('loadedmetadata', updateBufferUI);
+                    audioPlayer.addEventListener('seeking', updateBufferUI);
+                    audioPlayer.addEventListener('seeked', updateBufferUI);
+                } catch (_) {}
+                // Immediately pull current state and apply (playback + clock)
+                try {
+                    fetch(getApiUrl('/api/state')).then(r => r.json()).then(result => {
+                        if (result && result.success) {
+                            if (result.timestamp) lastUpdateTime = Math.max(lastUpdateTime, result.timestamp);
+                            processUpdate(result.data, result.timestamp, true);
+                        }
+                    }).catch(() => {});
+                } catch (_) {}
                 
                 console.log('Audio connected');
             } else {
@@ -917,9 +1361,32 @@ class BroadcastServer extends EventEmitter {
             }
         });
         
-        // Start heartbeat synchronization every 4 seconds
+        // Initialize Server-Sent Events for immediate updates
+        let sseConnected = false;
+        try {
+            const es = new EventSource(getApiUrl('/api/events'));
+            es.onopen = () => { sseConnected = true; };
+            es.addEventListener('state_update', (e) => {
+                try {
+                    const payload = JSON.parse(e.data);
+                    if (payload && payload.timestamp) {
+                        lastUpdateTime = Math.max(lastUpdateTime, payload.timestamp);
+                    }
+                    const state = payload ? payload.data : null;
+                    if (state) processUpdate(state, payload ? payload.timestamp : undefined);
+                } catch (err) { console.log('SSE parse error', err); }
+            });
+            es.onerror = () => { sseConnected = false; /* heartbeat will cover */ };
+        } catch (err) {
+            console.log('SSE not available', err);
+        }
+
+        // Start heartbeat synchronization every 4 seconds (fallback/re-sync)
         sendHeartbeat();
         setInterval(sendHeartbeat, 4000);
+        // Start ping measurement loop (every 10s)
+        measurePing();
+        setInterval(measurePing, 10000);
     </script>
 </body>
 </html>`;
