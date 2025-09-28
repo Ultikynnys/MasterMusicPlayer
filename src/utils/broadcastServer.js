@@ -188,11 +188,14 @@ class BroadcastServer extends EventEmitter {
    * Update the current playback state
    */
   updateState(newState) {
-    this.currentState = { ...this.currentState, ...newState };
+    const now = Date.now();
+    const prev = this.currentState || {};
+    // Merge new snapshot (no server-side extrapolation bookkeeping)
+    this.currentState = { ...prev, ...newState };
     // Record ephemeral action timestamp for fallbacks (heartbeat)
     if (newState && newState.action) {
       this.currentState.action = newState.action;
-      this.currentState.actionAt = Date.now();
+      this.currentState.actionAt = now;
     }
     this.broadcastStateUpdate();
     // Log only sanitized state to avoid leaking paths
@@ -215,8 +218,7 @@ class BroadcastServer extends EventEmitter {
 
     const stateData = JSON.stringify({
       type: 'state_update',
-      data: this.buildPublicState(),
-      timestamp: Date.now()
+      data: this.buildPublicState()
     });
 
     // In a real implementation, you'd send this to WebSocket clients
@@ -235,9 +237,12 @@ class BroadcastServer extends EventEmitter {
   buildPublicState() {
     const s = this.currentState || {};
     const serverNow = Date.now();
-    const baseTs = (typeof s.timestamp === 'number') ? s.timestamp : serverNow;
-    const effectiveCurrent = (s.currentTime || 0) + (s.isPlaying ? Math.max(0, (serverNow - baseTs) / 1000) : 0);
-    const ephemeralAction = (s.action && (serverNow - (s.actionAt || 0) < 10000)) ? s.action : null;
+    // Publish raw currentTime without extrapolation
+    const base = (typeof s.currentTime === 'number') ? s.currentTime : 0;
+    const dur = s.duration || (s.track && s.track.duration) || 0;
+    let effectiveCurrent = base;
+    if (dur > 0) effectiveCurrent = Math.min(effectiveCurrent, dur);
+    const ephemeralAction = (s.action && (serverNow - (s.actionAt || 0) < 1500)) ? s.action : null;
     const t = s.track ? {
       id: s.track.id,
       name: s.track.name,
@@ -249,12 +254,14 @@ class BroadcastServer extends EventEmitter {
       track: t,
       isPlaying: !!s.isPlaying,
       currentTime: effectiveCurrent,
+      serverCurrentTime: effectiveCurrent,
       duration: s.duration || 0,
       playlistName: s.playlist && s.playlist.name ? s.playlist.name : null,
       repeat: !!s.repeat,
       shuffle: !!s.shuffle,
       timestamp: serverNow,
-      action: ephemeralAction
+      action: ephemeralAction,
+      actionAt: ephemeralAction ? (s.actionAt || 0) : null
     };
   }
 
@@ -352,17 +359,11 @@ class BroadcastServer extends EventEmitter {
         case '/api/state':
           await this.serveCurrentState(req, res);
           break;
-        case '/api/heartbeat':
-          await this.handleHeartbeat(req, res);
-          break;
         case '/api/audio':
           await this.serveAudioStream(req, res);
           break;
         case '/api/theme':
           await this.serveThemeConfig(req, res);
-          break;
-        case '/api/ping':
-          await this.servePing(req, res);
           break;
         // (assets already handled early)
         default:
@@ -410,8 +411,7 @@ class BroadcastServer extends EventEmitter {
     // Send initial event with current state
     const stateData = JSON.stringify({
       type: 'state_update',
-      data: this.buildPublicState(),
-      timestamp: Date.now()
+      data: this.buildPublicState()
     });
     res.write(`event: state_update\n`);
     res.write(`data: ${stateData}\n\n`);
@@ -441,26 +441,7 @@ class BroadcastServer extends EventEmitter {
     }));
   }
 
-  /**
-   * Handle heartbeat requests for synchronization
-   */
-  async handleHeartbeat(req, res) {
-    // Only accept GET requests for heartbeat
-    if (req.method !== 'GET') {
-      res.writeHead(405, { 'Content-Type': 'application/json', ...this.getSecurityHeaders('application/json') });
-      res.end(JSON.stringify({ error: 'Method not allowed' }));
-      return;
-    }
-
-    // Return current state with heartbeat response
-    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', ...this.getSecurityHeaders('application/json') });
-    res.end(JSON.stringify({
-      success: true,
-      type: 'heartbeat',
-      data: this.buildPublicState(),
-      timestamp: Date.now()
-    }));
-  }
+  // (heartbeat endpoint removed; SSE is authoritative)
 
   /**
    * Serve audio stream for the current track
@@ -554,23 +535,8 @@ class BroadcastServer extends EventEmitter {
   async serveThemeConfig(req, res) {
     res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', ...this.getSecurityHeaders('application/json') });
     res.end(JSON.stringify({
-      success: true,
       theme: this.themeConfig
     }));
-  }
-
-  /**
-   * Lightweight ping endpoint for RTT measurement
-   */
-  async servePing(req, res) {
-    // GET only
-    if (req.method !== 'GET') {
-      res.writeHead(405, { 'Content-Type': 'application/json', ...this.getSecurityHeaders('application/json') });
-      res.end(JSON.stringify({ error: 'Method not allowed' }));
-      return;
-    }
-    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', ...this.getSecurityHeaders('application/json') });
-    res.end(JSON.stringify({ success: true, serverTime: Date.now() }));
   }
 
   /**
@@ -853,35 +819,15 @@ class BroadcastServer extends EventEmitter {
         }
         .buffer-text { font-size: 0.9rem; opacity: 0.75; }
         
-        .net-info {
-            margin: 0.25rem auto 1rem auto;
-            font-size: 0.9rem;
-            opacity: 0.75;
-        }
-        
-        .time-diff {
-            margin: 0.25rem auto 0.5rem auto;
-            font-size: 0.85rem;
-            opacity: 0.7;
-            font-family: monospace;
-        }
-        .time-diff.sync { color: #10b981; }
-        .time-diff.drift { color: #f59e0b; }
-        .time-diff.desync { color: #ef4444; }
-        
-        .controls {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            gap: 1.5rem;
-            margin-bottom: 2rem;
-        }
+        /* simplified UI: removed net-info, time-diff, dual-times */
         
         .volume-control {
-            display: flex;
+            display: grid;
+            grid-template-columns: auto 220px auto;
             align-items: center;
-            gap: 0.5rem;
+            justify-content: center;
+            column-gap: 0.5rem;
+            width: 100%;
         }
         
         .connection-control {
@@ -920,13 +866,16 @@ class BroadcastServer extends EventEmitter {
         }
         
         .volume-slider {
-            width: 150px;
+            width: 220px;
             height: 6px;
             background: ${containerColor};
             border-radius: 3px;
             outline: none;
             -webkit-appearance: none;
+            appearance: none;
         }
+        .volume-slider::-webkit-slider-runnable-track { height: 6px; background: ${containerColor}; border-radius: 3px; }
+        .volume-slider::-moz-range-track { height: 6px; background: ${containerColor}; border-radius: 3px; }
         
         .volume-slider::-webkit-slider-thumb {
             -webkit-appearance: none;
@@ -936,6 +885,7 @@ class BroadcastServer extends EventEmitter {
             border-radius: 50%;
             cursor: pointer;
             border: 2px solid ${borderColor};
+            margin-top: -7px; /* center thumb over 6px track */
         }
         
         .volume-slider::-moz-range-thumb {
@@ -1016,8 +966,7 @@ class BroadcastServer extends EventEmitter {
                 <div class="buffer-container"><div class="buffer-fill" id="buffer-fill"></div></div>
                 <div class="buffer-text" id="buffer-text">Buffered: 0%</div>
             </div>
-            <div class="net-info" id="net-info">Ping: -- ms • Drift threshold: -- s</div>
-            <div class="time-diff" id="time-diff">Time diff: -- s</div>
+            
         </div>
         
         <div class="controls">
@@ -1050,7 +999,6 @@ class BroadcastServer extends EventEmitter {
     </div>
     
     <script>
-        let lastUpdateTime = 0;
         let isConnected = false;
         let audioPlayer = null;
         let currentTrackId = null; // string form for stable comparison
@@ -1058,14 +1006,7 @@ class BroadcastServer extends EventEmitter {
         let lastTrackChangeAt = 0;
         let deviceVolume = 1; // local slider volume (0..1), independent from app master
         let trackVolume = ${this.currentState.track && typeof this.currentState.track.volume === 'number' ? this.currentState.track.volume : 1}; // per-track (0..1)
-        // Dynamic sync: full RTT + padding
-        let pingRttMs = 0;
-        const DRIFT_PADDING_SECONDS = 2.0;
-        function getSyncDriftThreshold() {
-            const base = pingRttMs > 0 ? (pingRttMs / 1000) : 0;
-            const thr = base + DRIFT_PADDING_SECONDS;
-            return Math.max(1.0, thr);
-        }
+        // Simplified broadcast: no drift thresholds or ping measurement
         
         // Get token from URL
         const urlParams = new URLSearchParams(window.location.search);
@@ -1103,8 +1044,9 @@ class BroadcastServer extends EventEmitter {
         let uiBaseTimestamp = 0;
         let uiIsPlaying = false;
         let uiDuration = 0;
-        let lastServerTime = 0;
-        let lastLocalTime = 0;
+        let localEnded = false; // if client finished the track earlier, wait for server track change
+        let lastActionAppliedAt = 0; // timestamp of last processed explicit action
+        let firstSyncAfterConnect = false; // start at displayed time on first sync after connect
 
         function updateUiClock() {
             try {
@@ -1112,36 +1054,19 @@ class BroadcastServer extends EventEmitter {
                 const elapsed = uiIsPlaying ? (Date.now() - uiBaseTimestamp) / 1000 : 0;
                 let t = uiBaseCurrent + elapsed;
                 if (uiDuration > 0) t = Math.min(t, uiDuration);
-                lastLocalTime = t;
                 document.getElementById('current-time').textContent = formatTime(t);
                 if (uiDuration > 0) document.getElementById('total-time').textContent = formatTime(uiDuration);
-                updateTimeDiff();
             } catch (_) {}
         }
+
+        // Keep UI clock ticking
         setInterval(updateUiClock, 250);
 
-        function updateTimeDiff() {
-            try {
-                const el = document.getElementById('time-diff');
-                if (!el || !audioPlayer || !isConnected) return;
-                
-                const serverTime = lastServerTime;
-                const localTime = audioPlayer.currentTime || 0;
-                const diff = Math.abs(serverTime - localTime);
-                
-                el.textContent = 'Time diff: ' + diff.toFixed(2) + ' s';
-                
-                // Color coding based on drift
-                el.className = 'time-diff';
-                if (diff < 0.5) {
-                    el.classList.add('sync');
-                } else if (diff < getSyncDriftThreshold()) {
-                    el.classList.add('drift');
-                } else {
-                    el.classList.add('desync');
-                }
-            } catch (_) {}
-        }
+        
+
+        // No playback rate drift correction in simplified mode
+
+        // Removed time-diff display and related calculations
 
         // Update buffered progress UI using media buffered ranges
         function updateBufferUI() {
@@ -1160,26 +1085,10 @@ class BroadcastServer extends EventEmitter {
             } catch (_) {}
         }
 
-        // Measure RTT to server and update UI + threshold
-        async function measurePing() {
-            try {
-                const t0 = performance.now();
-                const res = await fetch(getApiUrl('/api/ping', { nonce: Date.now() }));
-                await res.json();
-                const t1 = performance.now();
-                pingRttMs = Math.max(0, t1 - t0);
-                const el = document.getElementById('net-info');
-                if (el) {
-                    el.textContent = 'Ping: ' + Math.round(pingRttMs) + ' ms • Drift threshold: ' + getSyncDriftThreshold().toFixed(2) + ' s';
-                }
-            } catch (_) {
-                const el = document.getElementById('net-info');
-                if (el) el.textContent = 'Ping: -- ms • Drift threshold: ' + getSyncDriftThreshold().toFixed(2) + ' s';
-            }
-        }
+        // No ping measurement in simplified mode
 
-        // Unified handler for applying state updates (used by heartbeat & SSE)
-        function processUpdate(state, outerTimestamp, allowSync = true) {
+        // Unified handler for applying state updates (used by SSE)
+        function processUpdate(state, allowSync = true) {
             // Update track info
             document.getElementById('track-name').textContent = 
                 state.track ? state.track.name : 'No track playing';
@@ -1199,27 +1108,26 @@ class BroadcastServer extends EventEmitter {
                 statusText.textContent = 'Paused';
             }
             
-            // Update progress info
-            const srcTs = (state && typeof state.timestamp === 'number') ? state.timestamp : outerTimestamp;
-            if (typeof state.currentTime === 'number' && typeof state.duration === 'number') {
-                const timeDiff = srcTs ? (Date.now() - srcTs) / 1000 : 0;
-                const currentTime = state.currentTime + (state.isPlaying ? timeDiff : 0);
-                document.getElementById('current-time').textContent = formatTime(currentTime);
+            // Update progress info (no system-time extrapolation)
+            const serverTimeNow = (typeof state.serverCurrentTime === 'number') ? state.serverCurrentTime : (typeof state.currentTime === 'number' ? state.currentTime : 0);
+            if (typeof serverTimeNow === 'number' && typeof state.duration === 'number') {
+                document.getElementById('current-time').textContent = formatTime(serverTimeNow);
                 document.getElementById('total-time').textContent = formatTime(state.duration);
-                // Update UI clock base for smooth display
-                uiBaseCurrent = typeof state.currentTime === 'number' ? state.currentTime : 0;
-                uiBaseTimestamp = srcTs || Date.now();
+                // Update UI clock base for smooth display (UI-only)
+                uiBaseCurrent = serverTimeNow;
+                uiBaseTimestamp = Date.now();
                 uiIsPlaying = !!state.isPlaying;
                 uiDuration = state.duration || 0;
-                lastServerTime = uiBaseCurrent;
+                // Server time is UI-only; no diff computation in simplified mode
             }
             
             // Update audio player if connected
             if (isConnected && audioPlayer && state.track) {
                 const incomingId = String(state.track.id);
+                // Check if track has changed (debounce to avoid rapid reload loops)
                 const trackChanged = currentTrackId !== incomingId;
+                if (trackChanged) {
                 trackVolume = (state.track && typeof state.track.volume === 'number') ? state.track.volume : 1;
-                if (trackChanged && allowSync) {
                     // Debounce track change handling to avoid rapid reload loops
                     const nowTs = Date.now();
                     if (nowTs - lastTrackChangeAt < 800) {
@@ -1227,8 +1135,8 @@ class BroadcastServer extends EventEmitter {
                     }
                     lastTrackChangeAt = nowTs;
                     currentTrackId = incomingId;
-                    const timeDiff = srcTs ? (Date.now() - srcTs) / 1000 : 0;
-                    const expectedTime = (state.currentTime || 0) + (state.isPlaying ? timeDiff : 0);
+                    localEnded = false; // new track -> clear early-end gate
+                    // Simplified: no offset calibration required
                     const audioUrl = getApiUrl('/api/audio', { v: incomingId });
                     if (currentAudioUrl !== audioUrl) {
                         currentAudioUrl = audioUrl;
@@ -1237,7 +1145,17 @@ class BroadcastServer extends EventEmitter {
                     }
                     const onMeta = () => {
                         audioPlayer.removeEventListener('loadedmetadata', onMeta);
-                        try { audioPlayer.currentTime = expectedTime; } catch (_) {}
+                        // On first sync after connect, start at the currently displayed UI time; otherwise start at 0 on track changes
+                        const displayed = (() => {
+                            if (!uiBaseTimestamp) return uiBaseCurrent || 0;
+                            const elapsed = uiIsPlaying ? (Date.now() - uiBaseTimestamp) / 1000 : 0;
+                            let t = (uiBaseCurrent || 0) + elapsed;
+                            if (uiDuration > 0) t = Math.min(t, uiDuration);
+                            return t;
+                        })();
+                        const startAt = firstSyncAfterConnect ? displayed : 0;
+                        try { audioPlayer.currentTime = startAt; } catch (_) {}
+                        firstSyncAfterConnect = false;
                         applyEffectiveVolume();
                         updateBufferUI();
                         if (state.isPlaying) {
@@ -1246,24 +1164,45 @@ class BroadcastServer extends EventEmitter {
                     };
                     audioPlayer.addEventListener('loadedmetadata', onMeta);
                 } else {
-                    // Same track - sync time and play/pause
-                    if (allowSync && typeof state.currentTime === 'number' && srcTs) {
-                        const timeDiff = (Date.now() - srcTs) / 1000;
-                        const expectedTime = state.currentTime + (state.isPlaying ? timeDiff : 0);
-                        // If this is an explicit seek/track change, always set time (both directions)
-                        if (state.action === 'seek' || state.action === 'track_change') {
-                            audioPlayer.currentTime = expectedTime;
+                    // Same track - sync time and play/pause using serverCurrentTime only
+                    if (allowSync) {
+                        // If server already ended this track, pause locally and wait
+                        const serverEnded = (typeof state.duration === 'number' && state.duration > 0 && (serverTimeNow >= (state.duration - 0.2)));
+                        if (serverEnded) {
+                            localEnded = true;
+                            audioPlayer.pause();
+                            const st = document.getElementById('status-text');
+                            if (st) st.textContent = 'Waiting for next track...';
+                        } else if (localEnded) {
+                            // Client ended early: pause and wait until server switches tracks
+                            audioPlayer.pause();
+                            if (state.isPlaying) {
+                                const st = document.getElementById('status-text');
+                                if (st) st.textContent = 'Waiting for next track...';
+                            }
                         } else {
-                            // Otherwise correct only if drift significant in either direction
-                            const drift = expectedTime - audioPlayer.currentTime;
-                            if (Math.abs(drift) > getSyncDriftThreshold()) {
-                                audioPlayer.currentTime = expectedTime;
+                            const serverTime = (typeof state.serverCurrentTime === 'number') ? state.serverCurrentTime : (typeof state.currentTime === 'number' ? state.currentTime : 0);
+                            // Only on explicit seek: set playback position to serverTime
+                            if (state.action === 'seek') {
+                                const ts = (typeof state.actionAt === 'number') ? state.actionAt : Date.now();
+                                if (ts > lastActionAppliedAt) {
+                                    audioPlayer.currentTime = serverTime;
+                                    audioPlayer.playbackRate = 1.0;
+                                    lastActionAppliedAt = ts; // apply once per action event
+                                }
+                            } else {
+                                // Do nothing for normal updates; avoid chasing timestamps
                             }
                         }
                     }
-                    if (allowSync && state.isPlaying && audioPlayer.paused) {
-                        audioPlayer.play().catch(e => console.log('Playback failed:', e));
-                    } else if (allowSync && !state.isPlaying && !audioPlayer.paused) {
+                    if (!localEnded) {
+                        if (allowSync && state.isPlaying && audioPlayer.paused) {
+                            audioPlayer.play().catch(e => console.log('Playback failed:', e));
+                        } else if (allowSync && !state.isPlaying && !audioPlayer.paused) {
+                            audioPlayer.pause();
+                        }
+                    } else {
+                        // Ensure paused while waiting
                         audioPlayer.pause();
                     }
                     applyEffectiveVolume();
@@ -1277,23 +1216,7 @@ class BroadcastServer extends EventEmitter {
             }
         }
         
-        // Send heartbeat and update state
-        async function sendHeartbeat() {
-            if (sseConnected) return; // avoid duplicate updates when SSE is live
-            try {
-                const response = await fetch(getApiUrl('/api/heartbeat'));
-                const result = await response.json();
-                
-                if (result.success && result.timestamp > lastUpdateTime) {
-                    lastUpdateTime = result.timestamp;
-                    const state = result.data;
-                    const allow = state && (state.action === 'seek' || state.action === 'track_change');
-                    processUpdate(state, result.timestamp, !!allow);
-                }
-            } catch (error) {
-                console.error('Heartbeat failed:', error);
-            }
-        }
+        // (heartbeat fallback removed)
         
         // Connection toggle
         function toggleConnection() {
@@ -1306,6 +1229,7 @@ class BroadcastServer extends EventEmitter {
                 isConnected = true;
                 connectBtn.classList.add('connected');
                 connectionStatus.textContent = 'Disconnect Audio';
+                firstSyncAfterConnect = true;
                 
                 // Reset track ID to force reload on next update
                 currentTrackId = null;
@@ -1321,15 +1245,7 @@ class BroadcastServer extends EventEmitter {
                     audioPlayer.addEventListener('loadedmetadata', updateBufferUI);
                     audioPlayer.addEventListener('seeking', updateBufferUI);
                     audioPlayer.addEventListener('seeked', updateBufferUI);
-                } catch (_) {}
-                // Immediately pull current state and apply (playback + clock)
-                try {
-                    fetch(getApiUrl('/api/state')).then(r => r.json()).then(result => {
-                        if (result && result.success) {
-                            if (result.timestamp) lastUpdateTime = Math.max(lastUpdateTime, result.timestamp);
-                            processUpdate(result.data, result.timestamp, true);
-                        }
-                    }).catch(() => {});
+                    audioPlayer.addEventListener('ended', () => { localEnded = true; });
                 } catch (_) {}
                 
                 console.log('Audio connected');
@@ -1362,31 +1278,21 @@ class BroadcastServer extends EventEmitter {
         });
         
         // Initialize Server-Sent Events for immediate updates
-        let sseConnected = false;
         try {
             const es = new EventSource(getApiUrl('/api/events'));
-            es.onopen = () => { sseConnected = true; };
             es.addEventListener('state_update', (e) => {
                 try {
                     const payload = JSON.parse(e.data);
-                    if (payload && payload.timestamp) {
-                        lastUpdateTime = Math.max(lastUpdateTime, payload.timestamp);
-                    }
+                    // timestamp handling not needed
                     const state = payload ? payload.data : null;
-                    if (state) processUpdate(state, payload ? payload.timestamp : undefined);
+                    if (state) processUpdate(state);
                 } catch (err) { console.log('SSE parse error', err); }
             });
-            es.onerror = () => { sseConnected = false; /* heartbeat will cover */ };
+            es.onerror = () => { console.log('SSE error'); };
         } catch (err) {
             console.log('SSE not available', err);
         }
 
-        // Start heartbeat synchronization every 4 seconds (fallback/re-sync)
-        sendHeartbeat();
-        setInterval(sendHeartbeat, 4000);
-        // Start ping measurement loop (every 10s)
-        measurePing();
-        setInterval(measurePing, 10000);
     </script>
 </body>
 </html>`;

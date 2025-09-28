@@ -1104,7 +1104,7 @@ function setupAudioEventListeners() {
   // Throttled UI updates for playback progress
 let lastUIUpdate = 0;
 const UI_UPDATE_INTERVAL = 250; // ms – 4 fps is plenty for time/progress display
-let lastBroadcastSync = 0; // throttle remote sync to ~1 Hz
+let lastBroadcastSync = 0; // throttle remote sync to ~4 Hz
 
   audioElement.ontimeupdate = () => {
     // Throttled save of playback position
@@ -1121,8 +1121,8 @@ let lastBroadcastSync = 0; // throttle remote sync to ~1 Hz
       savePlaybackState();
     }
 
-    // Throttle broadcast sync to keep remote time aligned
-    if (now - lastBroadcastSync > 1000) {
+    // Throttle broadcast sync to keep remote time aligned (~4 Hz)
+    if (now - lastBroadcastSync > 250) {
       lastBroadcastSync = now;
       try { updateBroadcastState(); } catch (_) {}
     }
@@ -2773,6 +2773,15 @@ function updateBroadcastState(extra = {}) {
     frontendLogger.error('Error updating broadcast state', error);
   }
 }
+
+// Keep broadcasting state at ~1 Hz regardless of window focus, as some environments throttle
+// timeupdate events and timers when unfocused. This ensures remote clients keep receiving
+// the latest currentTime and play/pause status.
+try {
+  setInterval(() => {
+    try { updateBroadcastState(); } catch (_) {}
+  }, 1000);
+} catch (_) {}
 
 async function resetSettings() {
   // Automatically generate default config from form elements

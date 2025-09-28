@@ -85,7 +85,7 @@ Master Music Player includes a built-in HTTP server that allows you to stream yo
 
 ### Technical Details
 
-- **Sync Tolerance**: Automatic drift correction based on network RTT + 2 second padding
+- **Sync Tolerance**: Automatic drift correction based on network RTT + 10 second padding
 - **Throttled Updates**: Seek operations are rate-limited to prevent network flooding
 - **Server-Sent Events**: Real-time state updates for immediate synchronization
 - **Fallback Heartbeat**: Periodic sync checks when SSE is unavailable

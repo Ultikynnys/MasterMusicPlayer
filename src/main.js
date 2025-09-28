@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, Menu, shell, globalShortcut } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, Menu, shell, globalShortcut, powerSaveBlocker } = require('electron');
 const { exec, spawn } = require('child_process');
 const archiver = require('archiver');
 const extract = require('extract-zip');
@@ -14,11 +14,19 @@ const FileLock = require('./utils/fileLock');
 const ffmpegHelper = require('./utils/ffmpegHelper');
 const BroadcastServer = require('./utils/broadcastServer');
 
+// Disable Chromium background throttling so timers and media events keep firing when unfocused
+try {
+  app.commandLine.appendSwitch('disable-background-timer-throttling');
+  app.commandLine.appendSwitch('disable-renderer-backgrounding');
+  app.commandLine.appendSwitch('disable-background-media-suspend');
+} catch (_) {}
+
 let mainWindow;
 let isDownloading = false;
 let processWorkerPool;
 let fileLock;
 let broadcastServer;
+let playbackPSBId = null; // power save blocker id when playing
 
 // Initialize process worker pool
 async function initializeWorkerPool(ytDlpPath) {
@@ -105,7 +113,15 @@ async function initializeBroadcastServer() {
     // Load and apply initial config
     const appConfig = await loadAppConfig();
     if (appConfig.broadcast) {
-      broadcastServer.updateConfig(appConfig.broadcast);
+      // Keep previous token to detect if server generated a new one
+      const prevToken = appConfig.broadcast.accessToken || '';
+      const updated = broadcastServer.updateConfig(appConfig.broadcast);
+      // If a new token was generated (because it was missing), persist it immediately
+      if (updated && updated.requireToken && updated.accessToken && updated.accessToken !== prevToken) {
+        appConfig.broadcast = updated;
+        await saveAppConfig(appConfig);
+        logger.info('Persisted broadcast access token to app config');
+      }
     }
     
     // Load and apply theme config
@@ -296,7 +312,8 @@ function createWindow() {
       webPreferences: {
         nodeIntegration: true,
         contextIsolation: false,
-        enableRemoteModule: true
+        enableRemoteModule: true,
+        backgroundThrottling: false
       },
       icon: path.join(__dirname, 'renderer', 'assets', 'MMP_Logo.png'),
       titleBarStyle: 'default',
@@ -746,6 +763,21 @@ withErrorHandling('update-broadcast-state', async (event, state) => {
   
   broadcastServer.updateState(state);
   logger.debug('Broadcast state updated from renderer');
+  // Keep the app from being throttled/suspended while playing, regardless of focus
+  try {
+    if (state && state.isPlaying) {
+      if (playbackPSBId === null || !powerSaveBlocker.isStarted(playbackPSBId)) {
+        playbackPSBId = powerSaveBlocker.start('prevent-app-suspension');
+        logger.info('powerSaveBlocker started', { id: playbackPSBId });
+      }
+    } else if (playbackPSBId !== null) {
+      powerSaveBlocker.stop(playbackPSBId);
+      logger.info('powerSaveBlocker stopped', { id: playbackPSBId });
+      playbackPSBId = null;
+    }
+  } catch (e) {
+    logger.warn('powerSaveBlocker control failed', e);
+  }
 });
 
 // --- Audio Duration Extraction ---
