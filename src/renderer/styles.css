@@ -707,6 +707,20 @@ img[src$=".svg"] {
   background: transparent;
 }
 
+/* Larger icon buttons inside track/playlist action rows for better usability */
+.track-actions .btn-icon,
+.playlist-item-actions .btn-icon {
+  width: 40px;
+  height: 40px;
+}
+
+/* Ensure inner SVG scales appropriately */
+.track-actions .btn-icon svg,
+.playlist-item-actions .btn-icon svg {
+  width: 22px;
+  height: 22px;
+}
+
 .input {
   padding: 0.75rem;
   border: 1px solid var(--border-color);
@@ -1470,4 +1484,129 @@ label {
 /* Custom Scrollbar Thumb Styling */
 ::-webkit-scrollbar-thumb {
   border-radius: 4px;
+}
+
+/* Broadcast Section Styles */
+.broadcast-section {
+  border-top: 1px solid var(--border-color);
+  padding-top: 1rem;
+  margin-top: 1rem;
+}
+
+.broadcast-section h4 {
+  margin-bottom: 1rem;
+  color: var(--theme-text-color);
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.input-control {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.input-control label {
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: var(--theme-text-color);
+}
+
+.input-control input,
+.input-control select {
+  padding: 0.5rem;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  background: var(--container-color);
+  color: var(--theme-text-color);
+  font-size: 0.9rem;
+}
+
+.input-control input:focus,
+.input-control select:focus {
+  outline: none;
+  border-color: var(--primary-color);
+  box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.2);
+}
+
+.broadcast-controls {
+  display: flex;
+  gap: 0.5rem;
+  margin: 1rem 0;
+  flex-wrap: wrap;
+}
+
+.broadcast-info {
+  background: var(--surface-color);
+  padding: 1rem;
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+  margin-top: 1rem;
+}
+
+.broadcast-status {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+  font-size: 0.9rem;
+}
+
+.status-indicator {
+  padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+  font-size: 0.8rem;
+  font-weight: 500;
+}
+
+.status-indicator.running {
+  background: rgba(34, 197, 94, 0.2);
+  color: #22c55e;
+  border: 1px solid #22c55e;
+}
+
+.status-indicator.stopped {
+  background: rgba(239, 68, 68, 0.2);
+  color: #ef4444;
+  border: 1px solid #ef4444;
+}
+
+.shareable-url {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.shareable-url label {
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: var(--theme-text-color);
+}
+
+.shareable-url input {
+  flex: 1;
+  padding: 0.5rem;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  background: var(--container-color);
+  color: var(--theme-text-color);
+  font-size: 0.85rem;
+  font-family: monospace;
+}
+
+.shareable-url input:focus {
+  outline: none;
+  border-color: var(--primary-color);
+}
+
+.url-input-group {
+  display: flex;
+  gap: 0.5rem;
+  align-items: stretch;
+}
+
+.btn-small {
+  padding: 0.4rem 0.8rem;
+  font-size: 0.8rem;
 }

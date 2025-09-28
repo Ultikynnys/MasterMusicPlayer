@@ -146,6 +146,26 @@ ipcRenderer.on('show-age-restricted-notice', (_, data) => {
   }
 });
 
+// Broadcast event handlers
+ipcRenderer.on('broadcast-status-changed', (_, data) => {
+  try {
+    updateBroadcastStatus(data.running, data.url);
+    frontendLogger.info('Broadcast status changed', data);
+  } catch (err) {
+    console.error('[BROADCAST] Failed to handle status change', err, data);
+  }
+});
+
+ipcRenderer.on('broadcast-error', (_, data) => {
+  try {
+    showErrorNotification('Broadcast Error', data.error);
+    frontendLogger.error('Broadcast server error', data);
+  } catch (err) {
+    console.error('[BROADCAST] Failed to handle error', err, data);
+  }
+});
+
+
 // Helper function to convert hex color to RGB
 function hexToRgb(hex) {
   if (!hex) return { r: 0, g: 0, b: 0 };
@@ -277,6 +297,18 @@ document.addEventListener('DOMContentLoaded', async () => {
     visualizerEnabled: document.getElementById('visualizer-enabled'),
     saveRepeatState: document.getElementById('save-repeat-state'),
     saveTrackTime: document.getElementById('save-track-time'),
+    
+    // Broadcast controls
+    broadcastEnabled: document.getElementById('broadcast-enabled'),
+    broadcastHost: document.getElementById('broadcast-host'),
+    broadcastPort: document.getElementById('broadcast-port'),
+    broadcastPublicHost: document.getElementById('broadcast-public-host'),
+    broadcastRequireToken: document.getElementById('broadcast-require-token'),
+    generateTokenBtn: document.getElementById('generate-token-btn'),
+    openBroadcastBtn: document.getElementById('open-broadcast-btn'),
+    broadcastStatus: document.getElementById('broadcast-status'),
+    shareableUrl: document.getElementById('shareable-url'),
+    copyUrlBtn: document.getElementById('copy-url-btn'),
     
     // Playlist name modal
     playlistModalTitle: document.getElementById('playlist-modal-title'),
@@ -666,12 +698,12 @@ function createPlaylistElement(playlist) {
 
   const renameButton = createDOMElement('button', 'btn btn-small btn-icon btn-primary');
   renameButton.title = 'Rename Playlist';
-  renameButton.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-edit-2 icon-white"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path></svg>`;
+  renameButton.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-edit-2 icon-white"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path></svg>`;
   renameButton.onclick = () => renamePlaylist(playlist.id);
 
   const deleteButton = createDOMElement('button', 'btn btn-small btn-icon btn-secondary');
   deleteButton.title = 'Delete Playlist';
-  deleteButton.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-trash-2 icon-white"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg>`;
+  deleteButton.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-trash-2 icon-white"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg>`;
   deleteButton.onclick = () => deletePlaylist(playlist.id);
 
   actions.append(renameButton, deleteButton);
@@ -796,11 +828,11 @@ function createTrackElement(track, index) {
 
   const renameButton = createDOMElement('button', 'btn btn-small btn-icon btn-primary track-rename-btn');
   renameButton.title = 'Rename Track';
-  renameButton.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-edit-2 icon-white"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path></svg>`;
+  renameButton.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-edit-2 icon-white"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path></svg>`;
 
   const removeButton = createDOMElement('button', 'btn btn-small btn-icon btn-secondary track-remove-btn');
   removeButton.title = 'Remove from Playlist';
-  removeButton.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-trash-2 icon-white"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg>`;
+  removeButton.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-trash-2 icon-white"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg>`;
 
   actions.append(volumeControl, renameButton, removeButton);
   trackEl.append(dragHandle, trackInfoEl, actions);
@@ -816,6 +848,8 @@ function createTrackElement(track, index) {
       const finalVolume = track.volume * globalVolume;
       gainNode.gain.value = finalVolume;
     }
+    // Notify broadcast server so remote stream applies new track volume
+    try { updateBroadcastState(); } catch (_) {}
   });
 
   dragHandle.addEventListener('dragstart', handleTrackDragStart);
@@ -944,6 +978,8 @@ async function playTrack(track, index) {
 
     currentTrack = track;
     currentTrackIndex = index;
+    // Immediately publish new track state to broadcast server
+    try { updateBroadcastState(); } catch (_) {}
 
     const finalVolume = track.volume * globalVolume;
     gainNode.gain.value = finalVolume;
@@ -1062,13 +1098,14 @@ function setupAudioEventListeners() {
   audioElement.onloadedmetadata = () => {
     if (elements.totalTime) elements.totalTime.textContent = formatTime(audioElement.duration);
     if (elements.progressSlider) elements.progressSlider.max = audioElement.duration;
+    // Inform broadcast listeners about new duration/metadata
+    try { updateBroadcastState(); } catch (_) {}
   };
-
   // Throttled UI updates for playback progress
 let lastUIUpdate = 0;
 const UI_UPDATE_INTERVAL = 250; // ms – 4 fps is plenty for time/progress display
 
-audioElement.ontimeupdate = () => {
+  audioElement.ontimeupdate = () => {
     // Throttled save of playback position
         const now = Date.now();
     // Throttle UI change frequency to lower layout work
@@ -1137,8 +1174,14 @@ function updatePlayerUI() {
     elements.playPauseBtn.innerHTML = isPlaying ? pauseIcon : playIcon;
     updateRepeatIcon();
     updateShuffleIcon();
+    
+    // Update broadcast state
+    updateBroadcastState();
   } else {
     resetPlayerUI();
+    
+    // Update broadcast state for no track
+    updateBroadcastState();
   }
 }
 
@@ -1460,7 +1503,8 @@ function setupEventListeners() {
   if (elements.progressSlider) elements.progressSlider.addEventListener('input', (e) => {
     if (audioElement) {
       audioElement.currentTime = e.target.value;
-
+      // Notify broadcast server immediately on seek
+      try { updateBroadcastState(); } catch (_) {}
     }
   });
   if (elements.volumeSlider) elements.volumeSlider.addEventListener('input', async (e) => {
@@ -1519,7 +1563,53 @@ function setupEventListeners() {
   setupExternalLink('kofi-btn', 'https://ko-fi.com/r60dr60d', 'kofi');
   setupExternalLink('github-btn', 'https://github.com/Ultikynnys/MasterMusicPlayer', 'github');
   
-
+  // Broadcast controls
+  if (elements.generateTokenBtn) {
+    elements.generateTokenBtn.addEventListener('click', async () => {
+      try {
+        const result = await ipcRenderer.invoke('generate-broadcast-token');
+        if (result.success) {
+          elements.shareableUrl.value = result.url;
+          showSuccessNotification('New access token generated successfully');
+          frontendLogger.userAction('broadcast-token-generated');
+        }
+      } catch (error) {
+        frontendLogger.error('Failed to generate broadcast token', error);
+        showErrorNotification('Failed to generate token', error.message);
+      }
+    });
+  }
+  
+  if (elements.openBroadcastBtn) {
+    elements.openBroadcastBtn.addEventListener('click', async () => {
+      try {
+        const url = elements.shareableUrl.value;
+        if (url) {
+          await ipcRenderer.invoke('open-external-link', url);
+          frontendLogger.userAction('broadcast-page-opened');
+        }
+      } catch (error) {
+        frontendLogger.error('Failed to open broadcast page', error);
+        showErrorNotification('Failed to open broadcast page', error.message);
+      }
+    });
+  }
+  
+  if (elements.copyUrlBtn) {
+    elements.copyUrlBtn.addEventListener('click', async () => {
+      try {
+        const url = elements.shareableUrl.value;
+        if (url) {
+          await navigator.clipboard.writeText(url);
+          showSuccessNotification('URL copied to clipboard');
+          frontendLogger.userAction('broadcast-url-copied');
+        }
+      } catch (error) {
+        frontendLogger.error('Failed to copy URL', error);
+        showErrorNotification('Failed to copy URL', error.message);
+      }
+    });
+  }
 
   // Auto-save settings when any setting changes
   const settingsModal = document.getElementById('settings-modal');
@@ -1534,6 +1624,9 @@ function setupEventListeners() {
         // Handle special cases that need immediate UI updates
         if (configPath === 'visualizer.enabled') {
           toggleVisualizerCanvas(e.target.checked);
+        } else if (configPath.startsWith('broadcast.')) {
+          // Handle broadcast settings changes
+          await saveBroadcastSettings();
         }
         
         // Auto-save all settings
@@ -2414,6 +2507,10 @@ async function loadSettings() {
   try {
     appConfig = await ipcRenderer.invoke('get-app-config');
     updateSettingsInputs(appConfig);
+    
+    // Initialize broadcast UI
+    await updateBroadcastUI();
+    
     return appConfig;
   } catch (error) {
     frontendLogger.error('Failed to load settings', error);
@@ -2528,6 +2625,104 @@ async function saveSettings() {
   } catch (error) {
     frontendLogger.error('Failed to save settings', error);
     showErrorNotification('Settings Error', 'Failed to save settings. Please try again.');
+  }
+}
+
+// Broadcast-specific settings functions
+async function saveBroadcastSettings() {
+  try {
+    const broadcastConfig = {
+      enabled: elements.broadcastEnabled?.checked || false,
+      host: elements.broadcastHost?.value || '127.0.0.1',
+      port: parseInt(elements.broadcastPort?.value) || 4583,
+      publicHost: elements.broadcastPublicHost?.value || '',
+      requireToken: elements.broadcastRequireToken?.checked !== false,
+      accessToken: appConfig.broadcast?.accessToken || ''
+    };
+
+    const result = await ipcRenderer.invoke('update-broadcast-config', broadcastConfig);
+    if (result.success) {
+      // Update local config
+      appConfig.broadcast = result.config;
+      
+      // Update UI
+      await updateBroadcastUI();
+      
+      frontendLogger.info('Broadcast settings saved successfully');
+    }
+  } catch (error) {
+    frontendLogger.error('Failed to save broadcast settings', error);
+    showErrorNotification('Broadcast Error', 'Failed to save broadcast settings. Please try again.');
+  }
+}
+
+async function updateBroadcastUI() {
+  try {
+    const status = await ipcRenderer.invoke('get-broadcast-status');
+    updateBroadcastStatus(status.running, status.url);
+    
+    if (status.config) {
+      // Update form elements with current config
+      if (elements.broadcastEnabled) elements.broadcastEnabled.checked = status.config.enabled;
+      if (elements.broadcastHost) elements.broadcastHost.value = status.config.host;
+      if (elements.broadcastPort) elements.broadcastPort.value = status.config.port;
+      if (elements.broadcastPublicHost) elements.broadcastPublicHost.value = status.config.publicHost || '';
+      if (elements.broadcastRequireToken) elements.broadcastRequireToken.checked = status.config.requireToken;
+    }
+  } catch (error) {
+    frontendLogger.error('Failed to update broadcast UI', error);
+  }
+}
+
+function updateBroadcastStatus(isRunning, url) {
+  if (elements.broadcastStatus) {
+    elements.broadcastStatus.textContent = isRunning ? 'Running' : 'Stopped';
+    elements.broadcastStatus.className = `status-indicator ${isRunning ? 'running' : 'stopped'}`;
+  }
+  
+  if (elements.shareableUrl) {
+    elements.shareableUrl.value = url || '';
+  }
+  
+  if (elements.openBroadcastBtn) {
+    elements.openBroadcastBtn.disabled = !isRunning || !url;
+  }
+  
+  if (elements.copyUrlBtn) {
+    elements.copyUrlBtn.disabled = !url;
+  }
+}
+
+function updateBroadcastState() {
+  try {
+    const broadcastState = {
+      track: currentTrack ? {
+        id: currentTrack.id,
+        name: currentTrack.name,
+        artist: currentTrack.artist || 'Unknown Artist',
+        filePath: currentTrack.filePath,
+        duration: currentTrack.duration || 0,
+        volume: typeof currentTrack.volume === 'number' ? currentTrack.volume : 1
+      } : null,
+      isPlaying: isPlaying,
+      currentTime: audioElement.currentTime || 0,
+      duration: audioElement.duration || 0,
+      volume: globalVolume,
+      playlist: currentPlaylist ? {
+        id: currentPlaylist.id,
+        name: currentPlaylist.name
+      } : null,
+      repeat: isRepeat,
+      shuffle: isShuffle,
+      timestamp: Date.now() // Add server timestamp for synchronization
+    };
+
+    // Send to main process for broadcast
+    ipcRenderer.invoke('update-broadcast-state', broadcastState).catch(error => {
+      frontendLogger.error('Failed to update broadcast state', error);
+    });
+  } catch (error) {
+    frontendLogger.error('Error updating broadcast state', error);
   }
 }
 

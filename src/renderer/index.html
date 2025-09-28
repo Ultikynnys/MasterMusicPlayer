@@ -199,6 +199,53 @@
                             <button id="upload-cookies-btn" class="btn btn-secondary">Select cookies.txt...</button>
                                 <span id="cookies-status" class="status-indicator" style="margin-left:8px;">Checking...</span>
                         </div>
+                        
+                        <!-- Broadcast Section -->
+                        <div class="broadcast-section">
+                            <h4>Broadcast (Now Playing)</h4>
+                            <div class="checkbox-control">
+                                <label>
+                                    <input type="checkbox" id="broadcast-enabled" data-config-path="broadcast.enabled" data-default-value="false"> Enable Broadcast
+                                </label>
+                            </div>
+                            <div class="input-control">
+                                <label>Broadcast Host:</label>
+                                <select id="broadcast-host" data-config-path="broadcast.host" data-default-value="127.0.0.1">
+                                    <option value="127.0.0.1">127.0.0.1 (Local only)</option>
+                                    <option value="0.0.0.0">0.0.0.0 (LAN/Internet)</option>
+                                </select>
+                            </div>
+                            <div class="input-control">
+                                <label>Port:</label>
+                                <input type="number" id="broadcast-port" min="1024" max="65535" data-config-path="broadcast.port" data-default-value="4583">
+                            </div>
+                            <div class="input-control">
+                                <label>Public Host (optional):</label>
+                                <input type="text" id="broadcast-public-host" placeholder="your-domain.com or public IP" data-config-path="broadcast.publicHost" data-default-value="">
+                            </div>
+                            <div class="checkbox-control">
+                                <label>
+                                    <input type="checkbox" id="broadcast-require-token" data-config-path="broadcast.requireToken" data-default-value="true"> Require access token
+                                </label>
+                            </div>
+                            <div class="broadcast-controls">
+                                <button id="generate-token-btn" class="btn btn-secondary">Generate New Token</button>
+                                <button id="open-broadcast-btn" class="btn btn-secondary" disabled>Open Broadcast Page</button>
+                            </div>
+                            <div class="broadcast-info">
+                                <div class="broadcast-status">
+                                    <span>Status: </span>
+                                    <span id="broadcast-status" class="status-indicator">Stopped</span>
+                                </div>
+                                <div class="shareable-url">
+                                    <label>Shareable URL:</label>
+                                    <div class="url-input-group">
+                                        <input type="text" id="shareable-url" readonly placeholder="Enable broadcast to generate URL">
+                                        <button id="copy-url-btn" class="btn btn-small btn-secondary" disabled>Copy</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>

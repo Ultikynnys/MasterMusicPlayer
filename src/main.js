@@ -12,11 +12,13 @@ const ytDlpHelper = require('./utils/ytDlpHelper');
 const ProcessWorkerPool = require('./utils/processWorkerPool');
 const FileLock = require('./utils/fileLock');
 const ffmpegHelper = require('./utils/ffmpegHelper');
+const BroadcastServer = require('./utils/broadcastServer');
 
 let mainWindow;
 let isDownloading = false;
 let processWorkerPool;
 let fileLock;
+let broadcastServer;
 
 // Initialize process worker pool
 async function initializeWorkerPool(ytDlpPath) {
@@ -63,6 +65,72 @@ async function cleanupWorkerPool() {
     await processWorkerPool.terminate();
     processWorkerPool = null;
     logger.info('Process worker pool terminated');
+  }
+}
+
+// Initialize broadcast server
+async function initializeBroadcastServer() {
+  try {
+    broadcastServer = new BroadcastServer();
+    
+    // Set up event listeners
+    broadcastServer.on('started', (info) => {
+      logger.info('Broadcast server started', info);
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('broadcast-status-changed', { 
+          running: true, 
+          url: broadcastServer.getShareableUrl() 
+        });
+      }
+    });
+    
+    broadcastServer.on('stopped', () => {
+      logger.info('Broadcast server stopped');
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('broadcast-status-changed', { 
+          running: false, 
+          url: '' 
+        });
+      }
+    });
+    
+    broadcastServer.on('error', (error) => {
+      logger.error('Broadcast server error', error);
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('broadcast-error', { error: error.message });
+      }
+    });
+    
+    
+    // Load and apply initial config
+    const appConfig = await loadAppConfig();
+    if (appConfig.broadcast) {
+      broadcastServer.updateConfig(appConfig.broadcast);
+    }
+    
+    // Load and apply theme config
+    try {
+      const themeConfigPath = path.join(configPath, 'theme.json');
+      if (await fs.pathExists(themeConfigPath)) {
+        const themeConfig = await fs.readJson(themeConfigPath);
+        broadcastServer.updateTheme(themeConfig);
+      }
+    } catch (error) {
+      logger.error('Failed to load theme config for broadcast', error);
+    }
+    
+    logger.info('Broadcast server initialized');
+  } catch (error) {
+    logger.error('Failed to initialize broadcast server', error);
+  }
+}
+
+// Cleanup broadcast server
+async function cleanupBroadcastServer() {
+  if (broadcastServer) {
+    await broadcastServer.stop();
+    broadcastServer = null;
+    logger.info('Broadcast server terminated');
   }
 }
 
@@ -155,6 +223,14 @@ const defaultAppConfig = {
     isShuffle: false,
     saveRepeatState: true,
     saveTrackTime: true
+  },
+  broadcast: {
+    enabled: false,
+    host: '127.0.0.1',
+    port: 4583,
+    publicHost: '',
+    requireToken: true,
+    accessToken: ''
   }
 };
 
@@ -162,13 +238,17 @@ async function loadAppConfig() {
   try {
     if (await fs.pathExists(appConfigPath)) {
       const config = await fs.readJson(appConfigPath);
-      // Deep merge to handle nested objects like playbackState
+      // Deep merge to handle nested objects like playbackState and broadcast
       const mergedConfig = {
         ...defaultAppConfig,
         ...config,
         playbackState: {
           ...defaultAppConfig.playbackState,
           ...(config.playbackState || {})
+        },
+        broadcast: {
+          ...defaultAppConfig.broadcast,
+          ...(config.broadcast || {})
         }
       };
       logger.info('Loaded app config with playback state', { 
@@ -306,6 +386,9 @@ app.whenReady().then(async () => {
       } else {
         logger.error('yt-dlp not ready after ensure process', { path: ytDlpPath, ready: isReady });
       }
+      
+      // Initialize broadcast server
+      await initializeBroadcastServer();
       
       logger.info('Background initialization completed successfully');
       resolve();
@@ -600,8 +683,69 @@ withErrorHandling('get-theme-config', async () => {
 withErrorHandling('update-theme-config', async (event, theme) => {
   const configFile = path.join(configPath, 'theme.json');
   await fs.writeJson(configFile, theme, { spaces: 2 });
+  
+  // Update broadcast server theme
+  if (broadcastServer) {
+    broadcastServer.updateTheme(theme);
+  }
+  
   logger.info('Theme config updated successfully');
   return { success: true };
+});
+
+// IPC handlers for broadcast functionality
+withErrorHandling('update-broadcast-config', async (event, config) => {
+  if (!broadcastServer) {
+    throw new Error('Broadcast server not initialized');
+  }
+  
+  const updatedConfig = broadcastServer.updateConfig(config);
+  
+  // Save to app config
+  const appConfig = await loadAppConfig();
+  appConfig.broadcast = updatedConfig;
+  await saveAppConfig(appConfig);
+  
+  logger.info('Broadcast config updated successfully');
+  return { success: true, config: updatedConfig };
+});
+
+withErrorHandling('get-broadcast-status', async () => {
+  if (!broadcastServer) {
+    return { running: false, url: '' };
+  }
+  
+  return {
+    running: broadcastServer.isRunning,
+    url: broadcastServer.isRunning ? broadcastServer.getShareableUrl() : '',
+    config: broadcastServer.config
+  };
+});
+
+withErrorHandling('generate-broadcast-token', async () => {
+  if (!broadcastServer) {
+    throw new Error('Broadcast server not initialized');
+  }
+  
+  const newToken = broadcastServer.generateAccessToken();
+  const updatedConfig = broadcastServer.updateConfig({ accessToken: newToken });
+  
+  // Save to app config
+  const appConfig = await loadAppConfig();
+  appConfig.broadcast = updatedConfig;
+  await saveAppConfig(appConfig);
+  
+  logger.info('New broadcast token generated');
+  return { success: true, token: newToken, url: broadcastServer.getShareableUrl() };
+});
+
+withErrorHandling('update-broadcast-state', async (event, state) => {
+  if (!broadcastServer) {
+    return;
+  }
+  
+  broadcastServer.updateState(state);
+  logger.debug('Broadcast state updated from renderer');
 });
 
 // --- Audio Duration Extraction ---
@@ -1773,8 +1917,9 @@ withErrorHandling('set-system-volume', async (volumeMultiplier) => {
 
 
 app.on('window-all-closed', async () => {
-  // Clean up worker pool
+  // Clean up worker pool and broadcast server
   await cleanupWorkerPool();
+  await cleanupBroadcastServer();
   
   if (process.platform !== 'darwin') {
     app.quit();
