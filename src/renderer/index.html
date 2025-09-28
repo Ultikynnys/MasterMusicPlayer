@@ -188,6 +188,53 @@
                                 <input type="checkbox" id="save-track-time" data-config-path="playbackState.saveTrackTime" data-default-value="true"> Save Track Time Position
                             </label>
                         </div>
+                        <!-- Broadcast Settings -->
+                        <div class="settings-section">
+                            <h4>Broadcast</h4>
+                            <div class="checkbox-control">
+                                <label>
+                                    <input type="checkbox" id="broadcast-enabled" data-config-path="broadcast.enabled" data-default-value="false"> Enable Broadcast (Now Playing server)
+                                </label>
+                            </div>
+                            <div class="input-control">
+                                <label for="broadcast-port">Broadcast Port</label>
+                                <input type="number" id="broadcast-port" class="input" min="1024" max="65535" data-config-path="broadcast.port" data-default-value="4583">
+                                <small>Open: http://localhost:<span id="broadcast-port-display">4583</span></small>
+                                <div style="margin-top: 0.5rem;">
+                                    <button id="open-broadcast-btn" class="btn btn-secondary" type="button">Open Broadcast Page</button>
+                                </div>
+                            </div>
+                            <div class="input-control" style="margin-top: 0.75rem;">
+                                <label for="broadcast-host">Broadcast Host</label>
+                                <input type="text" id="broadcast-host" class="input" placeholder="127.0.0.1 or 0.0.0.0" data-config-path="broadcast.host" data-default-value="127.0.0.1">
+                                <small>Use 127.0.0.1 for localhost only. Use 0.0.0.0 for LAN/Internet exposure.</small>
+                            </div>
+                            <div class="input-control" style="margin-top: 0.5rem;">
+                                <label for="broadcast-public-host">Public Host (for shareable URL)</label>
+                                <input type="text" id="broadcast-public-host" class="input" placeholder="e.g. 28.242.53.232 or mydomain.com" data-config-path="broadcast.publicHost" data-default-value="">
+                                <small>Optional. If set, the Shareable URL uses this host. The server still binds to the Broadcast Host above.</small>
+                            </div>
+                            <div class="checkbox-control" style="margin-top: 0.75rem;">
+                                <label>
+                                    <input type="checkbox" id="broadcast-require-token" data-config-path="broadcast.requireToken" data-default-value="true"> Require access token
+                                </label>
+                            </div>
+                            <div class="input-control">
+                                <label for="broadcast-token">Access Token</label>
+                                <div style="display:flex; gap:8px; align-items:center;">
+                                    <input type="text" id="broadcast-token" class="input" placeholder="empty = blocked when required" data-config-path="broadcast.token" data-default-value="">
+                                    <button id="generate-broadcast-token" class="btn btn-secondary" type="button">Generate</button>
+                                </div>
+                                <small id="broadcast-token-hint">Keep this secret if exposed to the internet.</small>
+                            </div>
+                            <div class="input-control">
+                                <label for="broadcast-share-url">Shareable URL</label>
+                                <div style="display:flex; gap:8px; align-items:center;">
+                                    <input type="text" id="broadcast-share-url" class="input" readonly value="">
+                                    <button id="copy-broadcast-url" class="btn btn-secondary" type="button">Copy</button>
+                                </div>
+                            </div>
+                        </div>
                         <div class="version-info">
                             <label>Version: <span id="app-version">Loading...</span></label>
                         </div>

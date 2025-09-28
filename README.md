@@ -15,6 +15,7 @@ An Electron-based music player that serves as a wrapper for [yt-dlp](https://git
 - **Audio Playback**: Support for FLAC, MP3, OGG, and M4A formats.
 - **Music Visualizer**: Real-time audio visualization.
 - **Drag & Drop**: Add local files and reorder tracks.
+- **Broadcast (Now Playing) Server**: Optional HTTP page that shows the current track, streams audio, and updates live via SSE. Generates a shareable URL.
 
 ## Visual Showcase
 
@@ -43,6 +44,79 @@ An Electron-based music player that serves as a wrapper for [yt-dlp](https://git
 - **Playlist Organization**: Drag tracks between playlists.
 - **Per-track volume** Control with persistence.
 - **YouTube Cookies Integration**: Upload cookies.txt files through Settings → YouTube Cookies to access age-restricted content with automatic validation and status indicators.
+
+## Broadcast (Now Playing)
+
+The app can host a small HTTP server that shows a Now Playing page and streams the active track to remote devices. You’ll find all controls in `Settings → Broadcast`.
+
+![Broadcast](Showcase/broadcast.png)
+
+
+### Quick start (Local / LAN)
+1. Enable Broadcast.
+2. Set `Broadcast Host`:
+   - `127.0.0.1` → Local-only.
+   - `0.0.0.0` → Accept connections from your LAN/Internet.
+3. Pick a `Port` (default `4583`).
+4. Keep `Require access token` ON and click `Generate` to create a strong token.
+5. Optional: Set `Public Host` to your public IP/domain. This is used to build the Shareable URL.
+6. Use the Shareable URL (includes the token) or click `Open Broadcast Page`.
+
+### Access from the Internet (optional)
+- Add a Windows Firewall inbound rule for your chosen TCP port.
+- On your router, port-forward external TCP `PORT` → your PC’s LAN IP `PORT`.
+- Some routers don’t support hairpin NAT; test from mobile data.
+- If your ISP uses CGNAT or blocks inbound ports, use a tunnel (Cloudflare Tunnel or Ngrok) and put the tunnel hostname into `Public Host`.
+
+### Security hardening options
+The server enforces token authentication and ships with multiple protections (rate limiting, IP bans, path confinement). Advanced settings can be edited in `data/config/app.json` under the `broadcast` section:
+
+```json
+{
+  "broadcast": {
+    "enabled": true,
+    "host": "0.0.0.0",
+    "port": 4583,
+    "publicHost": "YOUR_PUBLIC_IP",
+    "requireToken": true,
+    "token": "REPLACE_WITH_YOUR_TOKEN",
+    "allowLocalNetworkOnly": false,
+    "allowQueryToken": true,
+    "allowedOrigins": [],
+    "rateLimit": { "windowMs": 60000, "maxRequests": 200 },
+    "banOnAuthFail": { "threshold": 8, "windowMs": 600000, "banMs": 3600000 },
+    "sseMaxPerIp": 1,
+    "streamMaxPerIp": 2
+  }
+}
+```
+
+- `allowLocalNetworkOnly`: when true, only localhost and RFC1918 ranges (10.x, 172.16–31.x, 192.168.x) can connect.
+- `allowQueryToken`: when false, the token must be sent in headers (see below), not in the URL.
+- `allowedOrigins`: optional CORS allowlist for exact origins. Empty = same-origin only. No wildcard is used.
+- `rateLimit`: basic per-IP rate limiting. Exceeding returns HTTP `429`.
+- `banOnAuthFail`: IP is banned after too many auth failures within a window.
+- `sseMaxPerIp` / `streamMaxPerIp`: caps live update and stream concurrency per IP.
+
+All protected endpoints require a token except `/favicon.ico` and `/app.js` (which loads the boot script for the page). Send the token either in the URL (`?token=...`) or via headers:
+
+```bash
+curl \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  http://HOST:PORT/now-playing
+```
+
+### Endpoints
+- `/` Now Playing page (HTML)
+- `/now-playing` Current track metadata (JSON)
+- `/stream` Audio stream of the active track (Range requests supported)
+- `/events` Server-Sent Events for live updates
+- `/status` Basic server status (JSON)
+
+### Troubleshooting
+- 401 Unauthorized: The token is missing/incorrect. Ensure the Shareable URL includes `?token=` or send the token in headers.
+- Can’t connect from the internet: Configure router port forwarding; check Windows Firewall; test from mobile data; if on CGNAT, use Cloudflare Tunnel or Ngrok.
+- Some formats don’t play in some browsers (e.g., FLAC). MP3/M4A are broadly supported.
 
 ## Keyboard Shortcuts
 

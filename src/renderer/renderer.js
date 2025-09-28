@@ -973,6 +973,22 @@ async function playTrack(track, index) {
     currentTrack = track;
     currentTrackIndex = index;
 
+    // Notify main process for broadcasting (served frontend)
+    try {
+      await ipcRenderer.invoke('update-now-playing', {
+        track: {
+          id: track.id,
+          name: track.name,
+          artist: track.artist || '',
+          duration: track.duration || 0,
+          filePath: track.filePath,
+          playlistName: currentPlaylist ? currentPlaylist.name : ''
+        }
+      });
+    } catch (e) {
+      frontendLogger.warn('Failed to update now-playing state', { error: e?.message });
+    }
+
     const finalVolume = track.volume * globalVolume;
     gainNode.gain.value = finalVolume;
 
@@ -1544,6 +1560,140 @@ function setupEventListeners() {
   // Keyboard shortcuts
   document.addEventListener('keydown', handleKeyboardShortcuts);
 
+  // Broadcast settings helpers
+  try {
+    const portInput = document.getElementById('broadcast-port');
+    const portDisplay = document.getElementById('broadcast-port-display');
+    const openBtn = document.getElementById('open-broadcast-btn');
+    const enabledCheckbox = document.getElementById('broadcast-enabled');
+    const hostInput = document.getElementById('broadcast-host');
+    const publicHostInput = document.getElementById('broadcast-public-host');
+    const requireTokenChk = document.getElementById('broadcast-require-token');
+    const tokenInput = document.getElementById('broadcast-token');
+    const genTokenBtn = document.getElementById('generate-broadcast-token');
+    const shareUrlInput = document.getElementById('broadcast-share-url');
+    const copyUrlBtn = document.getElementById('copy-broadcast-url');
+    const settingsBtn = document.getElementById('settings-btn');
+
+    const refreshPortDisplay = () => {
+      if (portDisplay && portInput) {
+        const val = parseInt(portInput.value, 10) || 4583;
+        portDisplay.textContent = String(val);
+      }
+    };
+    const buildBaseUrl = () => {
+      const hostPref = (publicHostInput?.value || '').trim();
+      const host = hostPref || (hostInput?.value || '127.0.0.1').trim() || '127.0.0.1';
+      const port = parseInt(portInput?.value || '4583', 10) || 4583;
+      return `http://${host}:${port}`;
+    };
+    const computeShareUrl = () => {
+      const base = buildBaseUrl();
+      const mustToken = !!requireTokenChk?.checked;
+      const tok = tokenInput?.value?.trim();
+      if (mustToken && tok) return `${base}/?token=${encodeURIComponent(tok)}`;
+      return `${base}/`;
+    };
+    const refreshShareUrl = () => {
+      refreshPortDisplay();
+      if (shareUrlInput) shareUrlInput.value = computeShareUrl();
+    };
+    refreshShareUrl();
+    if (portInput) {
+      portInput.addEventListener('input', refreshShareUrl);
+    }
+    if (openBtn) {
+      openBtn.addEventListener('click', async () => {
+        let url = computeShareUrl();
+        try {
+          // If the share URL contains 0.0.0.0 (no public host set), open localhost for convenience
+          if (publicHostInput && !publicHostInput.value.trim()) {
+            url = url.replace('://0.0.0.0:', '://localhost:');
+          }
+          await ipcRenderer.invoke('open-external-link', url);
+        } catch (e) { console.error('Failed to open broadcast page', e); }
+      });
+    }
+    if (enabledCheckbox) {
+      enabledCheckbox.addEventListener('change', () => {
+        // Just ensure display stays in sync; saveSettings() is already auto-called
+        refreshShareUrl();
+      });
+    }
+    if (hostInput) hostInput.addEventListener('input', refreshShareUrl);
+    if (requireTokenChk) requireTokenChk.addEventListener('change', async () => {
+      try {
+        if (requireTokenChk.checked && tokenInput && !tokenInput.value.trim()) {
+          let newTok = '';
+          try {
+            const crypto = require('crypto');
+            newTok = crypto.randomBytes(32).toString('base64url');
+          } catch {
+            newTok = Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
+          }
+          tokenInput.value = newTok;
+          await saveSettings();
+          if (typeof showSuccessNotification === 'function') {
+            showSuccessNotification('Token Generated', 'A secure access token was generated automatically.');
+          }
+        }
+      } catch {}
+      refreshShareUrl();
+    });
+    if (tokenInput) tokenInput.addEventListener('input', refreshShareUrl);
+    if (genTokenBtn) {
+      genTokenBtn.addEventListener('click', async () => {
+        try {
+          let newTok = '';
+          try {
+            const crypto = require('crypto');
+            newTok = crypto.randomBytes(32).toString('base64url');
+          } catch {
+            newTok = Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
+          }
+          if (tokenInput) tokenInput.value = newTok;
+          refreshShareUrl();
+          await saveSettings();
+          if (typeof showSuccessNotification === 'function') {
+            showSuccessNotification('Token Updated', 'A new broadcast token was generated.');
+          }
+        } catch (e) {
+          console.error('Failed to generate token', e);
+        }
+      });
+    }
+    if (copyUrlBtn) {
+      copyUrlBtn.addEventListener('click', async () => {
+        try {
+          const url = computeShareUrl();
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            await navigator.clipboard.writeText(url);
+          } else {
+            const tmp = document.createElement('input');
+            tmp.value = url;
+            document.body.appendChild(tmp);
+            tmp.select();
+            document.execCommand('copy');
+            document.body.removeChild(tmp);
+          }
+          if (typeof showSuccessNotification === 'function') {
+            showSuccessNotification('URL Copied', 'Broadcast URL copied to clipboard.');
+          }
+        } catch (e) {
+          console.error('Failed to copy URL', e);
+        }
+      });
+    }
+    if (settingsBtn) {
+      // When settings modal opens, refresh the computed URL after inputs populate
+      settingsBtn.addEventListener('click', () => {
+        setTimeout(refreshShareUrl, 50);
+      });
+    }
+  } catch (err) {
+    console.warn('Broadcast settings wiring failed', err);
+  }
+
   // Track actions (event delegation)
   elements.tracksList.addEventListener('click', (e) => {
     // Skip if clicking on volume slider or its children
@@ -1666,6 +1816,8 @@ function stopTrack() {
     isPlaying = false;
     updatePlayerUI();
   }
+  // Clear broadcasting now playing
+  try { ipcRenderer.invoke('update-now-playing', { track: null }); } catch {}
 }
 
 // Utility functions

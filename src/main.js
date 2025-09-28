@@ -6,6 +6,9 @@ const os = require('os');
 const path = require('path');
 const fs = require('fs-extra');
 const { v4: uuidv4 } = require('uuid');
+const http = require('http');
+
+const crypto = require('crypto');
 
 const logger = require('./utils/logger');
 const ytDlpHelper = require('./utils/ytDlpHelper');
@@ -17,6 +20,21 @@ let mainWindow;
 let isDownloading = false;
 let processWorkerPool;
 let fileLock;
+// --- Broadcasting state ---
+let broadcastServer = null;
+let sseClients = [];
+let currentAppConfig = null;
+let broadcastState = {
+  enabled: false,
+  port: 4583,
+  nowPlaying: null // { id, name, artist, duration, filePath, playlistName }
+};
+
+// Security/runtime maps for the broadcast server
+const sseCountsByIp = new Map();     // ip -> number of open SSE connections
+const streamCountsByIp = new Map();  // ip -> number of open stream connections
+const rateWindowsByIp = new Map();   // ip -> { start, count }
+const bansByIp = new Map();          // ip -> { banUntil: timestamp, fails: [timestamps] }
 
 // Initialize process worker pool
 async function initializeWorkerPool(ytDlpPath) {
@@ -146,6 +164,22 @@ const defaultAppConfig = {
   visualizer: {
     enabled: true
   },
+  broadcast: {
+    enabled: false,
+    port: 4583,
+    host: '127.0.0.1',
+    publicHost: '',
+    requireToken: true,
+    token: '',
+    // Security hardening options
+    allowLocalNetworkOnly: false,          // If true, only allow RFC1918/localhost clients
+    allowQueryToken: true,                 // If false, token must be sent via Authorization/X-Auth-Token headers
+    allowedOrigins: [],                    // Optional allow-list for CORS origins (exact match). Empty = same-origin only
+    rateLimit: { windowMs: 60000, maxRequests: 200 }, // Basic per-IP request rate limiting
+    banOnAuthFail: { threshold: 8, windowMs: 600000, banMs: 3600000 }, // Ban IP after too many auth failures
+    sseMaxPerIp: 1,                        // Limit concurrent SSE connections per IP
+    streamMaxPerIp: 2                      // Limit concurrent /stream connections per IP
+  },
   playbackState: {
     volume: 1,
     currentTrackId: null,
@@ -168,6 +202,10 @@ async function loadAppConfig() {
         playbackState: {
           ...defaultAppConfig.playbackState,
           ...(config.playbackState || {})
+        },
+        broadcast: {
+          ...defaultAppConfig.broadcast,
+          ...(config.broadcast || {})
         }
       };
       logger.info('Loaded app config with playback state', { 
@@ -190,6 +228,477 @@ async function saveAppConfig(config) {
   } catch (error) {
     logger.error('Failed to save app config', error);
     return false;
+  }
+}
+
+// ---------------------------------------------
+// Broadcasting (HTTP server for Now Playing)
+// ---------------------------------------------
+
+function getMimeTypeByExt(ext) {
+  const map = {
+    mp3: 'audio/mpeg',
+    m4a: 'audio/mp4',
+    mp4: 'audio/mp4',
+    aac: 'audio/aac',
+    wav: 'audio/wav',
+    ogg: 'audio/ogg',
+    oga: 'audio/ogg',
+    opus: 'audio/ogg',
+    flac: 'audio/flac'
+  };
+  return map[ext?.toLowerCase()] || 'application/octet-stream';
+}
+
+function writeCors(req, res, bc) {
+  // Stricter CORS: if allowedOrigins configured, only allow exact matches; otherwise omit header (same-origin only)
+  const origin = req.headers.origin;
+  if (Array.isArray(bc.allowedOrigins) && bc.allowedOrigins.length > 0) {
+    if (origin && bc.allowedOrigins.includes(origin)) {
+      res.setHeader('Access-Control-Allow-Origin', origin);
+    }
+    res.setHeader('Vary', 'Origin');
+  } else {
+    // No wildcard CORS to avoid unintended exposure
+    res.setHeader('Vary', 'Origin');
+  }
+  res.setHeader('Access-Control-Allow-Methods', 'GET,HEAD,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Range, Origin, Content-Type, Accept, Authorization, X-Auth-Token');
+}
+
+function writeSecurityHeaders(res) {
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  res.setHeader('Permissions-Policy', "geolocation=(), microphone=(), camera=(), autoplay=(), fullscreen=()");
+  res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+}
+
+function getClientIp(req) {
+  let ip = (req.socket && req.socket.remoteAddress) || '';
+  if (!ip) return '';
+  // Normalize IPv6 mapped IPv4
+  if (ip.startsWith('::ffff:')) ip = ip.substring(7);
+  if (ip === '::1') ip = '127.0.0.1';
+  return ip;
+}
+
+function isPrivateIp(ip) {
+  try {
+    if (!ip) return false;
+    if (ip === '127.0.0.1') return true;
+    if (ip.startsWith('10.')) return true;
+    if (ip.startsWith('192.168.')) return true;
+    if (ip.startsWith('172.')) {
+      const parts = ip.split('.');
+      const second = parseInt(parts[1] || '0', 10);
+      if (second >= 16 && second <= 31) return true;
+    }
+    // Treat link-local and ULA as private for simplicity
+    if (ip.startsWith('fe80:') || ip.startsWith('fc') || ip.startsWith('fd')) return true;
+  } catch {}
+  return false;
+}
+
+function rateLimitAllow(ip, bc) {
+  const conf = bc.rateLimit || { windowMs: 60000, maxRequests: 200 };
+  const now = Date.now();
+  let rec = rateWindowsByIp.get(ip);
+  if (!rec) {
+    rec = { start: now, count: 1 };
+    rateWindowsByIp.set(ip, rec);
+    return true;
+  }
+  if (now - rec.start > conf.windowMs) {
+    rec.start = now;
+    rec.count = 1;
+    return true;
+  }
+  rec.count += 1;
+  return rec.count <= conf.maxRequests;
+}
+
+function isIpBanned(ip, bc) {
+  const ban = bansByIp.get(ip);
+  if (!ban) return false;
+  if (ban.banUntil && Date.now() < ban.banUntil) return true;
+  return false;
+}
+
+function recordAuthFailure(ip, bc) {
+  const conf = bc.banOnAuthFail || { threshold: 8, windowMs: 600000, banMs: 3600000 };
+  let rec = bansByIp.get(ip);
+  const now = Date.now();
+  if (!rec) {
+    rec = { banUntil: 0, fails: [now] };
+    bansByIp.set(ip, rec);
+  } else {
+    // prune old
+    rec.fails = (rec.fails || []).filter(t => now - t <= conf.windowMs);
+    rec.fails.push(now);
+  }
+  if ((rec.fails || []).length >= conf.threshold) {
+    rec.banUntil = now + conf.banMs;
+    rec.fails = [];
+  }
+}
+
+function clearAuthFailures(ip) {
+  const rec = bansByIp.get(ip);
+  if (rec) rec.fails = [];
+}
+
+function sendSseToAll(event, data) {
+  const payload = `event: ${event}\n` +
+                  `data: ${JSON.stringify(data)}\n\n`;
+  sseClients = sseClients.filter((res) => {
+    try {
+      res.write(payload);
+      return true;
+    } catch {
+      try { res.end(); } catch {}
+      return false;
+    }
+  });
+}
+
+function getBroadcastConfig() {
+  return (currentAppConfig && currentAppConfig.broadcast) || defaultAppConfig.broadcast;
+}
+
+function extractAuthToken(req, bc) {
+  try {
+    const auth = req.headers['authorization'];
+    if (auth && typeof auth === 'string') {
+      const m = /^Bearer\s+(.+)$/i.exec(auth.trim());
+      if (m) return m[1];
+    }
+    const headerToken = req.headers['x-auth-token'];
+    if (typeof headerToken === 'string' && headerToken) return headerToken;
+    if (!bc || bc.allowQueryToken) {
+      const url = new URL(req.url, 'http://localhost');
+      const q = url.searchParams.get('token');
+      if (q) return q;
+    }
+  } catch {}
+  return null;
+}
+
+function isAuthorized(req, bcParam) {
+  const bc = bcParam || getBroadcastConfig();
+  if (!bc.requireToken) return true;
+  // If token protection is enabled but no token configured, deny access
+  if (!bc.token || typeof bc.token !== 'string' || bc.token.length === 0) return false;
+  const tok = extractAuthToken(req, bc);
+  if (typeof tok !== 'string') return false;
+  // constant-time compare
+  const a = Buffer.from(tok);
+  const b = Buffer.from(bc.token);
+  if (a.length !== b.length) return false;
+  try { return crypto.timingSafeEqual(a, b); } catch { return false; }
+}
+
+function startBroadcastServer(port = 4583, host = '127.0.0.1') {
+  if (broadcastServer) {
+    logger.info('Broadcast server already running');
+    return;
+  }
+
+  const server = http.createServer(async (req, res) => {
+    try {
+      const bc = getBroadcastConfig();
+      writeCors(req, res, bc);
+      writeSecurityHeaders(res);
+      if (req.method === 'OPTIONS') {
+        res.writeHead(204);
+        return res.end();
+      }
+
+      const url = new URL(req.url, `http://localhost:${port}`);
+      const pathname = url.pathname;
+      const clientIp = getClientIp(req);
+
+      // IP ban or local-only enforcement
+      if (isIpBanned(clientIp, bc)) {
+        res.writeHead(403, { 'Cache-Control': 'no-store' });
+        return res.end('Forbidden');
+      }
+      if (bc.allowLocalNetworkOnly && !isPrivateIp(clientIp)) {
+        res.writeHead(403, { 'Cache-Control': 'no-store' });
+        return res.end('Forbidden');
+      }
+
+      // Rate limiting
+      if (!rateLimitAllow(clientIp, bc)) {
+        res.writeHead(429, { 'Cache-Control': 'no-store' });
+        return res.end('Too Many Requests');
+      }
+
+      // Favicon: always return 204 to avoid noisy errors, no auth required
+      if (pathname === '/favicon.ico') {
+        res.writeHead(204, { 'Cache-Control': 'no-store' });
+        return res.end();
+      }
+
+      // Serve bootstrap JS without auth (but still subject to IP gating and rate limit)
+      if (pathname === '/app.js') {
+        const js = `;(function(){
+  var doc = document;
+  var titleEl = doc.getElementById('title');
+  var artistEl = doc.getElementById('artist');
+  var player = doc.getElementById('player');
+  var refreshBtn = doc.getElementById('refresh');
+  var addrEl = doc.getElementById('addr');
+  try { addrEl.textContent = location.href.replace(/\\/$/, ''); } catch (e) {}
+  var params = new URLSearchParams(location.search || '');
+  var token = params.get('token') || '';
+  function u(p){ return token ? (p + (p.indexOf('?') !== -1 ? '&' : '?') + 'token=' + encodeURIComponent(token)) : p; }
+  function loadNowPlaying(){
+    return fetch(u('/now-playing'), { cache: 'no-store' })
+      .then(function(r){ if (!r.ok) throw new Error('No data'); return r.json(); })
+      .then(function(d){
+        if (!d || !d.track) { titleEl.textContent = 'No track'; artistEl.textContent=''; return; }
+        titleEl.textContent = d.track.name || 'Unknown Title';
+        artistEl.textContent = (d.track.artist || '') + (d.track.playlistName ? ' — ' + d.track.playlistName : '');
+        var curId = player.dataset.tid;
+        if (curId !== String(d.track.id)) {
+          player.dataset.tid = String(d.track.id);
+          var wasPlaying = !player.paused;
+          var src = u('/stream');
+          src += (src.indexOf('?') !== -1 ? '&' : '?') + 't=' + Date.now();
+          player.src = src;
+          try { player.load(); if (wasPlaying) { player.play(); } } catch (e) {}
+        }
+      })
+      .catch(function(){});
+  }
+  if (refreshBtn) refreshBtn.onclick = loadNowPlaying;
+  try {
+    var es = new EventSource(u('/events'));
+    es.addEventListener('now-playing', function(){ loadNowPlaying(); });
+  } catch (e) {}
+  loadNowPlaying();
+  setInterval(loadNowPlaying, 5000);
+})();`;
+        res.writeHead(200, { 'Content-Type': 'application/javascript; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
+        return res.end(js);
+      }
+
+      // Authorization check for all endpoints (except favicon)
+      if (!isAuthorized(req)) {
+        if (pathname === '/') {
+          res.writeHead(401, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+          return res.end('<!doctype html><html><head><meta charset="utf-8"><title>Unauthorized</title></head><body style="font-family:system-ui;background:#0f172a;color:#fff"><div style="max-width:700px;margin:3rem auto;background:#111827;padding:20px;border-radius:12px;border:1px solid #334155"><h2>401 Unauthorized</h2><p>This broadcast requires a token.</p><p>Append <code>?token=YOUR_TOKEN</code> to the URL or configure token settings in the app.</p></div></body></html>');
+        }
+        res.writeHead(401, { 'Cache-Control': 'no-store' });
+        return res.end('Unauthorized');
+      }
+
+      if (pathname === '/') {
+        const html = `<!doctype html><html><head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" /><title>Now Playing</title><style>body{font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif;background:#0f172a;color:#fff;margin:0;padding:24px} .card{max-width:720px;margin:0 auto;background:#111827;border:1px solid #334155;border-radius:12px;padding:20px;box-shadow:0 6px 20px rgba(0,0,0,.4)} h1{margin:0 0 10px 0;font-size:20px} .meta{opacity:.8;margin-bottom:16px} .controls{display:flex;gap:12px;align-items:center;margin-top:12px} button{background:#4f46e5;color:#fff;border:none;padding:10px 16px;border-radius:8px;cursor:pointer} button:hover{background:#6366f1} audio{width:100%;margin-top:10px} .badge{display:inline-block;background:#0ea5e9;color:#001b2e;padding:4px 8px;border-radius:999px;font-size:12px;margin-left:6px} .small{font-size:12px;opacity:.7} .row{display:flex;justify-content:space-between;align-items:center;gap:8px}</style></head><body><div class="card"><div class="row"><h1>Master Music Player<span class="badge">Now Playing</span></h1><div class="small" id="addr"></div></div><div id="title">No track</div><div class="meta" id="artist"></div><audio id="player" controls preload="none"></audio><div class="controls"><button id="refresh">Refresh</button></div><div class="small">Tip: keep this tab open to listen. Updates push automatically.</div></div><script src="/app.js?v=2" type="text/javascript"></script></body></html>`;
+        res.setHeader('Content-Security-Policy', "default-src 'self'; img-src 'self' data:; media-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; object-src 'none'; frame-ancestors 'none'; base-uri 'none'");
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
+        return res.end(html);
+      }
+
+      if (pathname === '/app.js') {
+        const js = `;(function(){
+  var doc = document;
+  var titleEl = doc.getElementById('title');
+  var artistEl = doc.getElementById('artist');
+  var player = doc.getElementById('player');
+  var refreshBtn = doc.getElementById('refresh');
+  var addrEl = doc.getElementById('addr');
+  try { addrEl.textContent = location.href.replace(/\/$/, ''); } catch (e) {}
+  var qs = (location.search || '').replace(/^\?/, '');
+  var token = '';
+  try {
+    if (typeof URLSearchParams !== 'undefined') {
+      token = new URLSearchParams(location.search || '').get('token') || '';
+    } else {
+      var parts = qs.split('&');
+      for (var i=0; i<parts.length; i++) {
+        var kv = parts[i].split('=');
+        if (decodeURIComponent(kv[0] || '') === 'token') { token = decodeURIComponent(kv[1] || ''); break; }
+      }
+    }
+  } catch (e) {}
+  function u(p){ return token ? (p + (p.indexOf('?') !== -1 ? '&' : '?') + 'token=' + encodeURIComponent(token)) : p; }
+  function loadNowPlaying(){
+    return fetch(u('/now-playing'), { cache: 'no-store' })
+      .then(function(r){ if (!r.ok) throw new Error('No data'); return r.json(); })
+      .then(function(d){
+        if (!d || !d.track) { titleEl.textContent = 'No track'; artistEl.textContent=''; return; }
+        titleEl.textContent = d.track.name || 'Unknown Title';
+        artistEl.textContent = (d.track.artist || '') + (d.track.playlistName ? ' — ' + d.track.playlistName : '');
+        var curId = player.dataset.tid;
+        if (curId !== String(d.track.id)) {
+          player.dataset.tid = String(d.track.id);
+          var wasPlaying = !player.paused;
+          var src = u('/stream');
+          src += (src.indexOf('?') !== -1 ? '&' : '?') + 't=' + Date.now();
+          player.src = src;
+          try { player.load(); if (wasPlaying) { player.play(); } } catch (e) {}
+        }
+      })
+      .catch(function(){});
+  }
+  if (refreshBtn) refreshBtn.onclick = loadNowPlaying;
+  try {
+    var es = new EventSource(u('/events'));
+    es.addEventListener('now-playing', function(){ loadNowPlaying(); });
+  } catch (e) {}
+  loadNowPlaying();
+  setInterval(loadNowPlaying, 5000);
+})();`;
+        res.writeHead(200, { 'Content-Type': 'application/javascript; charset=utf-8', 'Cache-Control': 'no-store' });
+        return res.end(js);
+      }
+
+      if (pathname === '/status') {
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
+        return res.end(JSON.stringify({ enabled: broadcastState.enabled, port }));
+      }
+
+      if (pathname === '/now-playing') {
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
+        const t = broadcastState.nowPlaying;
+        const safe = t ? { id: t.id || null, name: t.name || 'Unknown', artist: t.artist || '', duration: t.duration || 0, playlistName: t.playlistName || '' } : null;
+        return res.end(JSON.stringify({ track: safe }));
+      }
+
+      if (pathname === '/events') {
+        const current = sseCountsByIp.get(clientIp) || 0;
+        if (current >= (bc.sseMaxPerIp || 1)) {
+          res.writeHead(429, { 'Cache-Control': 'no-store' });
+          return res.end('Too Many SSE Connections');
+        }
+        res.writeHead(200, {
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-store',
+          'Connection': 'keep-alive'
+        });
+        res.write('\n');
+        sseClients.push(res);
+        sseCountsByIp.set(clientIp, current + 1);
+        req.on('close', () => {
+          try { res.end(); } catch {}
+          sseClients = sseClients.filter(r => r !== res);
+          const cur = sseCountsByIp.get(clientIp) || 1;
+          if (cur <= 1) sseCountsByIp.delete(clientIp); else sseCountsByIp.set(clientIp, cur - 1);
+        });
+        return; // keep connection open
+      }
+
+      if (pathname === '/stream') {
+        const scur = streamCountsByIp.get(clientIp) || 0;
+        if (scur >= (bc.streamMaxPerIp || 2)) {
+          res.writeHead(429, { 'Cache-Control': 'no-store' });
+          return res.end('Too Many Streams');
+        }
+        const np = broadcastState.nowPlaying;
+        if (!np || !np.filePath) {
+          res.writeHead(404);
+          return res.end('No track');
+        }
+        const filePath = toAbsolutePath(np.filePath);
+        // Enforce that streaming is limited to the songs directory
+        const resolved = path.resolve(filePath);
+        const allowedRoot = path.resolve(songsPath);
+        if (!(resolved === allowedRoot || resolved.startsWith(allowedRoot + path.sep))) {
+          res.writeHead(403);
+          return res.end('Forbidden');
+        }
+        if (!await fs.pathExists(filePath)) {
+          res.writeHead(404);
+          return res.end('File missing');
+        }
+
+        const stat = await fs.stat(filePath);
+        const total = stat.size;
+        const ext = path.extname(filePath).slice(1);
+        const contentType = getMimeTypeByExt(ext);
+        res.setHeader('Accept-Ranges', 'bytes');
+
+        if (req.method === 'HEAD') {
+          res.writeHead(200, {
+            'Content-Type': contentType,
+            'Content-Length': total,
+            'Cache-Control': 'no-store'
+          });
+          return res.end();
+        }
+
+        const range = req.headers.range;
+        if (range) {
+          const match = /bytes=(\d+)-(\d+)?/.exec(range);
+          const start = match ? parseInt(match[1], 10) : 0;
+          const end = match && match[2] ? parseInt(match[2], 10) : total - 1;
+          if (start >= total || end >= total) {
+            res.writeHead(416, { 'Content-Range': `bytes */${total}` });
+            return res.end();
+          }
+          const chunkSize = (end - start) + 1;
+          res.writeHead(206, {
+            'Content-Range': `bytes ${start}-${end}/${total}`,
+            'Accept-Ranges': 'bytes',
+            'Content-Length': chunkSize,
+            'Content-Type': contentType,
+            'Cache-Control': 'no-store'
+          });
+          const stream = fs.createReadStream(filePath, { start, end });
+          stream.pipe(res);
+          stream.on('error', () => { try { res.end(); } catch {} });
+        } else {
+          res.writeHead(200, {
+            'Content-Length': total,
+            'Content-Type': contentType,
+            'Cache-Control': 'no-store'
+          });
+          const stream = fs.createReadStream(filePath);
+          stream.pipe(res);
+          stream.on('error', () => { try { res.end(); } catch {} });
+        }
+        return;
+      }
+
+      res.writeHead(404);
+      res.end('Not Found');
+    } catch (err) {
+      logger.error('Broadcast server error', err);
+      try { res.writeHead(500); res.end('Server Error'); } catch {}
+    }
+  });
+
+  server.on('error', (err) => {
+    logger.error('Failed to start broadcast server', err, { port });
+    // Notify renderer of failure
+    if (mainWindow && mainWindow.webContents) {
+      mainWindow.webContents.send('main-log', { level: 'error', message: 'Broadcast server failed to start', data: { port, error: err.message } });
+    }
+  });
+
+  server.listen(port, host, () => {
+    logger.info('Broadcast server listening', { port, host });
+  });
+
+  broadcastServer = server;
+  broadcastState.enabled = true;
+  broadcastState.port = port;
+}
+
+function stopBroadcastServer() {
+  if (!broadcastServer) return;
+  try {
+    sseClients.forEach((res) => { try { res.end(); } catch {} });
+    sseClients = [];
+    broadcastServer.close();
+    logger.info('Broadcast server stopped');
+  } catch (e) {
+    logger.warn('Error stopping broadcast server', e);
+  } finally {
+    broadcastServer = null;
+    broadcastState.enabled = false;
   }
 }
 
@@ -310,6 +819,16 @@ app.whenReady().then(async () => {
   await createDataDirectories();
   // Initialize file lock
   fileLock = new FileLock(path.join(appDataPath, 'locks'));
+  // Load config early and set broadcast if enabled
+  try {
+    currentAppConfig = await loadAppConfig();
+    const bc = currentAppConfig.broadcast || { enabled: false, port: 4583, host: '127.0.0.1' };
+    if (bc.enabled) {
+      startBroadcastServer(bc.port || 4583, bc.host || '127.0.0.1');
+    }
+  } catch (e) {
+    logger.warn('Failed to load app config at startup', e);
+  }
   
   // Show window immediately for fast startup
   createWindow();
@@ -631,8 +1150,66 @@ withErrorHandling('get-app-version', async () => {
 });
 
 withErrorHandling('save-app-config', async (event, config) => {
+  const prev = currentAppConfig || defaultAppConfig;
+  const prevBroadcast = (prev && prev.broadcast) || { enabled: false, port: 4583, host: '127.0.0.1' };
+  const nextBroadcast = (config && config.broadcast) || { enabled: false, port: 4583, host: '127.0.0.1' };
+
   await saveAppConfig(config);
+  currentAppConfig = config;
+
+  // React to broadcast changes
+  try {
+    const prevEnabled = !!prevBroadcast.enabled;
+    const nextEnabled = !!nextBroadcast.enabled;
+    const prevPort = prevBroadcast.port || 4583;
+    const nextPort = nextBroadcast.port || 4583;
+    const prevHost = prevBroadcast.host || '127.0.0.1';
+    const nextHost = nextBroadcast.host || '127.0.0.1';
+
+    if (prevEnabled !== nextEnabled || prevPort !== nextPort || prevHost !== nextHost) {
+      if (nextEnabled) {
+        // Restart on host/port change or start fresh
+        if (broadcastServer) stopBroadcastServer();
+        startBroadcastServer(nextPort, nextHost);
+      } else {
+        stopBroadcastServer();
+      }
+    }
+  } catch (e) {
+    logger.warn('Failed to apply broadcast setting change', e);
+  }
+
   return true;
+});
+
+// Renderer will call this whenever a new track starts playing
+withErrorHandling('update-now-playing', async (event, payload) => {
+  try {
+    // Normalize payload
+    const np = payload && payload.track !== undefined ? payload.track : payload;
+    // Allow clearing now playing when null/undefined provided
+    if (!np) {
+      broadcastState.nowPlaying = null;
+      sendSseToAll('now-playing', { ok: true });
+      return { success: true };
+    }
+    // Store relative path if possible for consistency, but allow absolute
+    const abs = toAbsolutePath(np.filePath || '');
+    broadcastState.nowPlaying = {
+      id: np.id || null,
+      name: np.name || np.title || 'Unknown',
+      artist: np.artist || '',
+      duration: np.duration || 0,
+      filePath: abs,
+      playlistName: np.playlistName || payload?.playlistName || ''
+    };
+    // Notify SSE clients
+    sendSseToAll('now-playing', { ok: true });
+    return { success: true };
+  } catch (e) {
+    logger.warn('Failed to update now playing', e);
+    return { success: false };
+  }
 });
 
 // IPC handlers for theme configuration
