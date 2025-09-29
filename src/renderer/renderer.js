@@ -975,6 +975,8 @@ async function playTrack(track, index) {
     audioElement.src = fileUrl;
     audioElement.load();
     audioElement.volume = 1;
+    audioElement.muted = false; // keep unmuted; use gainNode for silence
+    audioElement.playbackRate = 1.0; // enforce normal speed
 
     currentTrack = track;
     currentTrackIndex = index;
@@ -1391,7 +1393,11 @@ function setVolume(volume) {
   } else {
     gainNode.gain.value = volume;
   }
-  elements.audioPlayer.muted = volume === 0;
+  // Do NOT toggle the underlying media element's muted flag.
+  // In Chromium/Electron, background tabs/windows with muted or silent media
+  // can be subject to playback/timer throttling. Rely solely on the Web Audio
+  // gainNode to achieve true silence at volume 0, which keeps the media pipeline
+  // active at normal speed even when unfocused.
   globalVolume = volume;
   updateVolumeIcon(volume);
   
