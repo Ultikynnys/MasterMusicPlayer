@@ -9,6 +9,7 @@ class FrontendLogger {
     this.startTime = Date.now();
   }
 
+
   async log(level, message, data = null) {
     // Also log to the renderer console for easier debugging
     const consoleArgs = [`[${level}] ${message}`];
@@ -39,6 +40,7 @@ class FrontendLogger {
       url: window.location.href,
       userAgent: navigator.userAgent
     };
+    // (media event clock sync is set in setupAudioEventListeners())
 
     // Send to main process for UI display
     try {
@@ -202,6 +204,14 @@ gainNode.connect(compressorNode);
 compressorNode.connect(audioCtx.destination);
 
 gainNode.gain.value = 1;
+// A tiny floor to avoid absolute mathematical silence which some engines may treat as idle
+const SILENT_GAIN_FLOOR = 1e-5; // ~-100 dB, effectively inaudible
+function setPipelineGain(v) {
+  try {
+    const gv = (typeof v === 'number' && v > 0) ? v : SILENT_GAIN_FLOOR;
+    gainNode.gain.value = gv;
+  } catch (_) {}
+}
 
 // Global state
 let currentPlaylist = null;
@@ -337,6 +347,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     
     // Restore playback state after everything is initialized
     await restorePlaybackState();
+    // Start UI ticker to keep time/progress responsive even if ontimeupdate is throttled
+    try { startUITicker(); } catch (_) {}
     
     frontendLogger.info('App initialization completed successfully');
   } catch (error) {
@@ -634,6 +646,71 @@ function toggleVisualizer(enabled) {
   }
 }
 
+// --- Playback clock using AudioContext time (robust when backgrounded) ---
+let clockRunning = false;
+let clockAnchorTrackTime = 0; // seconds at last anchor
+let clockAnchorCtxTime = 0;   // audioCtx.currentTime at last anchor
+
+function beginClock() {
+  try {
+    clockAnchorTrackTime = audioElement ? (audioElement.currentTime || 0) : 0;
+    clockAnchorCtxTime = audioCtx ? (audioCtx.currentTime || 0) : 0;
+    clockRunning = true;
+  } catch (_) {}
+}
+
+function pauseClock() {
+  try {
+    // Freeze anchor to the most accurate reading
+    const nowT = getAccurateCurrentTime();
+    clockAnchorTrackTime = nowT;
+    clockAnchorCtxTime = audioCtx ? (audioCtx.currentTime || 0) : 0;
+    clockRunning = false;
+  } catch (_) {}
+}
+
+function seekClock(newTime) {
+  try {
+    clockAnchorTrackTime = Math.max(0, Number(newTime) || 0);
+    clockAnchorCtxTime = audioCtx ? (audioCtx.currentTime || 0) : 0;
+  } catch (_) {}
+}
+
+function getAccurateCurrentTime() {
+  try {
+    if (clockRunning && audioCtx && audioCtx.state !== 'suspended') {
+      const delta = (audioCtx.currentTime || 0) - (clockAnchorCtxTime || 0);
+      let t = (clockAnchorTrackTime || 0) + (isFinite(delta) ? delta : 0);
+      const dur = audioElement ? (audioElement.duration || 0) : 0;
+      if (dur > 0) t = Math.min(t, dur);
+      if (t < 0) t = 0;
+      return t;
+    }
+    return audioElement ? (audioElement.currentTime || 0) : 0;
+  } catch (_) {
+    return audioElement ? (audioElement.currentTime || 0) : 0;
+  }
+}
+
+function startUITicker() {
+  try {
+    const TICK_MS = 250; // 4 Hz
+    setInterval(() => {
+      try {
+        if (!audioElement) return;
+        const t = getAccurateCurrentTime();
+        if (elements.currentTime) elements.currentTime.textContent = formatTime(t);
+        if (elements.progressSlider) {
+          if (!elements.progressSlider.max || Number(elements.progressSlider.max) === 0) {
+            elements.progressSlider.max = audioElement.duration || 0;
+          }
+          elements.progressSlider.value = t;
+        }
+      } catch (_) {}
+    }, TICK_MS);
+  } catch (_) {}
+}
+
 function updateThemeInputs(theme) {
   elements.primaryColor.value = theme.primaryColor;
   elements.secondaryColor.value = theme.secondaryColor;
@@ -846,7 +923,7 @@ function createTrackElement(track, index) {
     savePlaylist(true);
     if (currentTrack && currentTrack.id === track.id) {
       const finalVolume = track.volume * globalVolume;
-      gainNode.gain.value = finalVolume;
+      setPipelineGain(finalVolume);
     }
     // Notify broadcast server so remote stream applies new track volume
     try { updateBroadcastState(); } catch (_) {}
@@ -984,7 +1061,7 @@ async function playTrack(track, index) {
     try { updateBroadcastState(); } catch (_) {}
 
     const finalVolume = track.volume * globalVolume;
-    gainNode.gain.value = finalVolume;
+    setPipelineGain(finalVolume);
 
     currentAudio = audioElement;
 
@@ -994,6 +1071,7 @@ async function playTrack(track, index) {
       playPromise.then(() => {
         // Playback started successfully.
         isPlaying = true;
+        try { beginClock(); } catch (_) {}
         updatePlayerUI();
         updateTrackHighlight();
       }).catch(error => {
@@ -1145,8 +1223,17 @@ let lastBroadcastSync = 0; // throttle remote sync to ~4 Hz
 
   // Notify broadcast on any seek (mouse, keyboard, programmatic)
   audioElement.onseeked = () => {
+    try { seekClock(audioElement ? (audioElement.currentTime || 0) : 0); } catch (_) {}
     try { updateBroadcastState({ action: 'seek' }); } catch (_) {}
   };
+
+  // Sync clock with core media events and keep rate normalized
+  try {
+    audioElement.onplay = () => { try { beginClock(); } catch (_) {} };
+    audioElement.onpause = () => { try { pauseClock(); } catch (_) {} };
+    audioElement.onseeking = () => { try { seekClock(audioElement ? (audioElement.currentTime || 0) : 0); } catch (_) {} };
+    audioElement.onratechange = () => { try { audioElement.playbackRate = 1.0; } catch (_) {} };
+  } catch (_) {}
 
   audioElement.onerror = () => {
     // Ignore benign errors triggered when src is intentionally cleared (e.g., MEDIA_ELEMENT_ERROR: Empty src attribute)
@@ -1157,6 +1244,20 @@ let lastBroadcastSync = 0; // throttle remote sync to ~4 Hz
     }
     frontendLogger.error('Audio playback error', mediaErr, { trackId: currentTrack ? currentTrack.id : 'unknown' });
   };
+
+  // Keep AudioContext active and playback rate normalized on visibility changes
+  try {
+    document.addEventListener('visibilitychange', async () => {
+      try {
+        if (!document.hidden && audioCtx && audioCtx.state === 'suspended') {
+          await audioCtx.resume();
+        }
+        if (audioElement) {
+          audioElement.playbackRate = 1.0;
+        }
+      } catch (_) {}
+    });
+  } catch (_) {}
 }
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -1389,9 +1490,9 @@ function setVolume(volume) {
   // Allow amplification above 1.0 safely via GainNode
   if (currentTrack) {
     const finalVolume = currentTrack.volume * volume;
-    gainNode.gain.value = finalVolume;
+    setPipelineGain(finalVolume);
   } else {
-    gainNode.gain.value = volume;
+    setPipelineGain(volume);
   }
   // Do NOT toggle the underlying media element's muted flag.
   // In Chromium/Electron, background tabs/windows with muted or silent media
@@ -1549,6 +1650,7 @@ function setupEventListeners() {
   if (elements.progressSlider) elements.progressSlider.addEventListener('input', (e) => {
     if (audioElement) {
       audioElement.currentTime = e.target.value;
+      try { seekClock(e.target.value); } catch (_) {}
       // Throttled broadcast while dragging
       scheduleSeekBroadcast();
     }
@@ -1558,6 +1660,7 @@ function setupEventListeners() {
     if (seekBroadcastTimer) { clearTimeout(seekBroadcastTimer); seekBroadcastTimer = null; }
     lastSeekBroadcast = Date.now();
     isSeekDragging = false;
+    try { seekClock(audioElement ? (audioElement.currentTime || 0) : 0); } catch (_) {}
     try { updateBroadcastState({ action: 'seek' }); } catch (_) {}
   });
   if (elements.volumeSlider) elements.volumeSlider.addEventListener('input', async (e) => {
@@ -1792,13 +1895,14 @@ function togglePlayPause() {
   if (isPlaying) {
     audioElement.pause();
     isPlaying = false;
+    try { pauseClock(); } catch (_) {}
   } else {
     // Recalculate volume before resuming playback
     if (currentTrack) {
       const finalVolume = currentTrack.volume * globalVolume;
-      gainNode.gain.value = finalVolume;
+      setPipelineGain(finalVolume);
     }
-    audioElement.play().catch(error => {
+    audioElement.play().then(() => { try { beginClock(); } catch (_) {} }).catch(error => {
       frontendLogger.error('Error playing audio', error);
     });
     isPlaying = true;
@@ -2758,7 +2862,7 @@ function updateBroadcastState(extra = {}) {
         volume: typeof currentTrack.volume === 'number' ? currentTrack.volume : 1
       } : null,
       isPlaying: isPlaying,
-      currentTime: audioElement.currentTime || 0,
+      currentTime: getAccurateCurrentTime(),
       duration: audioElement.duration || 0,
       volume: globalVolume,
       playlist: currentPlaylist ? {
