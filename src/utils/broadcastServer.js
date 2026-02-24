@@ -8,34 +8,42 @@ const logger = require('./logger');
 // --- Theme helpers to mirror renderer behavior ---
 function clamp(n, min, max) { return Math.min(max, Math.max(min, n)); }
 function hexToRgb(hex) {
-  const cleaned = hex.replace('#','');
-  const bigint = parseInt(cleaned.length === 3 ? cleaned.split('').map(c=>c+c).join('') : cleaned, 16);
+  const cleaned = hex.replace('#', '');
+  const bigint = parseInt(cleaned.length === 3 ? cleaned.split('').map(c => c + c).join('') : cleaned, 16);
   const r = (bigint >> 16) & 255;
   const g = (bigint >> 8) & 255;
   const b = bigint & 255;
   return { r, g, b };
 }
-function rgbToHex(r,g,b){
-  const toHex = (v)=>('0'+v.toString(16)).slice(-2);
-  return `#${toHex(clamp(Math.round(r),0,255))}${toHex(clamp(Math.round(g),0,255))}${toHex(clamp(Math.round(b),0,255))}`;
+function rgbToHex(r, g, b) {
+  const toHex = (v) => ('0' + v.toString(16)).slice(-2);
+  return `#${toHex(clamp(Math.round(r), 0, 255))}${toHex(clamp(Math.round(g), 0, 255))}${toHex(clamp(Math.round(b), 0, 255))}`;
 }
 // Lighten/darken by percentage (positive lightens, negative darkens)
-function lightenColor(hex, percent){
-  try{
-    const {r,g,b} = hexToRgb(hex);
-    const p = percent/100;
-    const lr = p >= 0 ? r + (255 - r)*p : r*(1+p);
-    const lg = p >= 0 ? g + (255 - g)*p : g*(1+p);
-    const lb = p >= 0 ? b + (255 - b)*p : b*(1+p);
-    return rgbToHex(lr,lg,lb);
-  }catch{ return hex; }
+function lightenColor(hex, percent) {
+  try {
+    const { r, g, b } = hexToRgb(hex);
+    const p = percent / 100;
+    const lr = p >= 0 ? r + (255 - r) * p : r * (1 + p);
+    const lg = p >= 0 ? g + (255 - g) * p : g * (1 + p);
+    const lb = p >= 0 ? b + (255 - b) * p : b * (1 + p);
+    return rgbToHex(lr, lg, lb);
+  } catch (err) {
+    logger.warn('Failed to lighten color, returning fallback hex', { hex, percent, error: err.message });
+    return hex;
+  }
 }
-function luminance({r,g,b}){
-  const a=[r,g,b].map(v=>{v/=255;return v<=0.03928? v/12.92 : Math.pow((v+0.055)/1.055,2.4)});
-  return 0.2126*a[0]+0.7152*a[1]+0.0722*a[2];
+function luminance({ r, g, b }) {
+  const a = [r, g, b].map(v => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4) });
+  return 0.2126 * a[0] + 0.7152 * a[1] + 0.0722 * a[2];
 }
-function isLightColor(hex){
-  try{ return luminance(hexToRgb(hex)) > 0.6; }catch{ return false; }
+function isLightColor(hex) {
+  try {
+    return luminance(hexToRgb(hex)) > 0.6;
+  } catch (err) {
+    logger.warn('Failed to check if color is light, assuming false', { hex, error: err.message });
+    return false;
+  }
 }
 
 class BroadcastServer extends EventEmitter {
@@ -131,7 +139,13 @@ class BroadcastServer extends EventEmitter {
         this.server = null;
         this.clients.clear();
         // Close and clear SSE clients
-        for (const res of this.sseClients) { try { res.end(); } catch (_) {} }
+        for (const res of this.sseClients) {
+          try {
+            res.end();
+          } catch (err) {
+            logger.warn('Failed to cleanly close SSE client on shutdown', { error: err.message });
+          }
+        }
         this.sseClients.clear();
         logger.info('Broadcast server stopped');
         this.emit('stopped');
@@ -146,9 +160,9 @@ class BroadcastServer extends EventEmitter {
   updateConfig(newConfig) {
     const wasRunning = this.isRunning;
     const oldConfig = { ...this.config };
-    
+
     this.config = { ...this.config, ...newConfig };
-    
+
     // Generate token if required and not provided
     if (this.config.requireToken && !this.config.accessToken) {
       this.config.accessToken = this.generateAccessToken();
@@ -227,9 +241,15 @@ class BroadcastServer extends EventEmitter {
 
     // Push to SSE clients immediately
     const payload = `event: state_update\n` +
-                    `data: ${stateData}\n\n`;
+      `data: ${stateData}\n\n`;
     for (const res of this.sseClients) {
-      try { res.write(payload); } catch (_) {}
+      try {
+        res.write(payload);
+      } catch (err) {
+        logger.warn('Failed to push state update to SSE client', { error: err.message });
+        // Assume disconnected client, clean it up
+        this.sseClients.delete(res);
+      }
     }
   }
 
@@ -271,11 +291,11 @@ class BroadcastServer extends EventEmitter {
   getShareableUrl() {
     const host = this.config.publicHost || this.config.host;
     const baseUrl = `http://${host}:${this.config.port}`;
-    
+
     if (this.config.requireToken && this.config.accessToken) {
       return `${baseUrl}?token=${this.config.accessToken}`;
     }
-    
+
     return baseUrl;
   }
 
@@ -418,14 +438,24 @@ class BroadcastServer extends EventEmitter {
 
     // Keep-alive ping comments
     const ka = setInterval(() => {
-      try { res.write(`: ping\n\n`); } catch (_) {}
+      try {
+        res.write(`: ping\n\n`);
+      } catch (err) {
+        logger.warn('Failed to send SSE keepalive ping, clearing client', { error: err.message });
+        clearInterval(ka);
+        this.sseClients.delete(res);
+      }
     }, 25000);
 
     // Cleanup on close
     req.on('close', () => {
       clearInterval(ka);
       this.sseClients.delete(res);
-      try { res.end(); } catch (_) {}
+      try {
+        res.end();
+      } catch (err) {
+        logger.warn('Failed to end SSE response on connection close', { error: err.message });
+      }
     });
   }
 
@@ -461,7 +491,7 @@ class BroadcastServer extends EventEmitter {
 
     try {
       const filePath = this.currentState.track.filePath;
-      
+
       if (!await fs.pathExists(filePath)) {
         res.writeHead(404, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Audio file not found' }));
@@ -490,9 +520,9 @@ class BroadcastServer extends EventEmitter {
         const start = parseInt(parts[0], 10);
         const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
         const chunksize = (end - start) + 1;
-        
+
         const stream = fs.createReadStream(filePath, { start, end });
-        
+
         res.writeHead(206, {
           'Content-Range': `bytes ${start}-${end}/${fileSize}`,
           'Accept-Ranges': 'bytes',
@@ -504,7 +534,7 @@ class BroadcastServer extends EventEmitter {
           'Content-Disposition': 'inline; filename="track.mp3"',
           ...this.getSecurityHeaders('audio/mpeg')
         });
-        
+
         stream.pipe(res);
       } else {
         // Serve entire file
@@ -517,7 +547,7 @@ class BroadcastServer extends EventEmitter {
           'Content-Disposition': 'inline; filename="track.mp3"',
           ...this.getSecurityHeaders('audio/mpeg')
         });
-        
+
         const stream = fs.createReadStream(filePath);
         stream.pipe(res);
       }
@@ -565,7 +595,7 @@ class BroadcastServer extends EventEmitter {
       }
 
       const logoBuffer = await fs.readFile(found);
-      res.writeHead(200, { 
+      res.writeHead(200, {
         'Content-Type': 'image/png',
         'Content-Length': logoBuffer.length,
         // Cache for 7 days
@@ -603,7 +633,7 @@ class BroadcastServer extends EventEmitter {
       }
 
       const iconBuffer = await fs.readFile(found);
-      res.writeHead(200, { 
+      res.writeHead(200, {
         'Content-Type': 'image/png',
         'Content-Length': iconBuffer.length,
         // Cache for 7 days
@@ -633,7 +663,10 @@ class BroadcastServer extends EventEmitter {
       if (ra.startsWith('::ffff:')) return ra.slice(7);
       if (ra === '::1') return '127.0.0.1';
       return ra;
-    } catch { return ''; }
+    } catch (err) {
+      logger.warn('Failed to extract client IP from request', { error: err.message });
+      return '';
+    }
   }
 
   isRateLimited(ip) {
@@ -674,21 +707,21 @@ class BroadcastServer extends EventEmitter {
     const trackName = track ? track.name : 'No track playing';
     const isPlaying = this.currentState.isPlaying;
     const theme = this.themeConfig || {};
-    
+
     // Base theme
     const primaryColor = theme.primaryColor || '#8b5cf6';
     const secondaryColor = theme.secondaryColor || '#374151';
     const textColor = theme.textIconColor || '#ffffff';
     const lightBg = isLightColor(secondaryColor);
-    
+
     // Derived colors (match renderer applyTheme logic)
     const containerColor = theme.containerColor || (lightBg ? lightenColor(secondaryColor, -20) : lightenColor(secondaryColor, 25));
-    const surfaceColor   = theme.surfaceColor   || (lightBg ? lightenColor(secondaryColor, -15) : lightenColor(secondaryColor, 20));
-    const borderColor    = theme.borderColor    || (lightBg ? lightenColor(secondaryColor, -30) : lightenColor(secondaryColor, 40));
-    const hoverColor     = theme.hoverColor     || lightenColor(primaryColor, 15);
+    const surfaceColor = theme.surfaceColor || (lightBg ? lightenColor(secondaryColor, -15) : lightenColor(secondaryColor, 20));
+    const borderColor = theme.borderColor || (lightBg ? lightenColor(secondaryColor, -30) : lightenColor(secondaryColor, 40));
+    const hoverColor = theme.hoverColor || lightenColor(primaryColor, 15);
     const secondaryHover = theme.secondaryHover || lightenColor(secondaryColor, 15);
-    const sliderHandle   = lightenColor(primaryColor, 10);
-    
+    const sliderHandle = lightenColor(primaryColor, 10);
+
     return `
 <!DOCTYPE html>
 <html lang="en">
@@ -1056,7 +1089,9 @@ class BroadcastServer extends EventEmitter {
                 if (uiDuration > 0) t = Math.min(t, uiDuration);
                 document.getElementById('current-time').textContent = formatTime(t);
                 if (uiDuration > 0) document.getElementById('total-time').textContent = formatTime(uiDuration);
-            } catch (_) {}
+            } catch (err) {
+              logger.warn('Failed to set audio current time from broadcast update', { error: err.message });
+            }
         }
 
         // Keep UI clock ticking
@@ -1082,7 +1117,9 @@ class BroadcastServer extends EventEmitter {
                 }
                 fill.style.width = pct.toFixed(1) + '%';
                 text.textContent = 'Buffered: ' + pct.toFixed(0) + '%';
-            } catch (_) {}
+            } catch (err) {
+                console.warn('Failed to update buffer UI', err);
+            }
         }
 
         // No ping measurement in simplified mode
@@ -1154,7 +1191,9 @@ class BroadcastServer extends EventEmitter {
                             return t;
                         })();
                         const startAt = firstSyncAfterConnect ? displayed : 0;
-                        try { audioPlayer.currentTime = startAt; } catch (_) {}
+                        try { audioPlayer.currentTime = startAt; } catch (err) {
+                          logger.warn('Failed to set current time during local playback sync', { startAt, error: err.message });
+                        }
                         firstSyncAfterConnect = false;
                         applyEffectiveVolume();
                         updateBufferUI();
@@ -1191,7 +1230,21 @@ class BroadcastServer extends EventEmitter {
                                     lastActionAppliedAt = ts; // apply once per action event
                                 }
                             } else {
-                                // Do nothing for normal updates; avoid chasing timestamps
+                                // Apply soft and hard drift correction to stay synced
+                                const diff = serverTime - audioPlayer.currentTime;
+                                if (Math.abs(diff) > 2.0) {
+                                    // Hard sync if drift is > 2 seconds
+                                    audioPlayer.currentTime = serverTime;
+                                } else if (diff > 0.2) {
+                                    // Client is behind (server time > client time)
+                                    audioPlayer.playbackRate = 1.05;
+                                } else if (diff < -0.2) {
+                                    // Client is ahead (server time < client time)
+                                    audioPlayer.playbackRate = 0.95;
+                                } else {
+                                    // Fast recovery to normal speed if close enough
+                                    audioPlayer.playbackRate = 1.0;
+                                }
                             }
                         }
                     }
@@ -1246,7 +1299,9 @@ class BroadcastServer extends EventEmitter {
                     audioPlayer.addEventListener('seeking', updateBufferUI);
                     audioPlayer.addEventListener('seeked', updateBufferUI);
                     audioPlayer.addEventListener('ended', () => { localEnded = true; });
-                } catch (_) {}
+                } catch (err) {
+                  logger.warn('Failed to pause local audio sync', { error: err.message });
+                }
                 
                 console.log('Audio connected');
             } else {

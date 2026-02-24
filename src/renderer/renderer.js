@@ -112,7 +112,7 @@ ipcRenderer.on('show-download-completion-notice', (_, data) => {
   try {
     const { title, message, ageRestrictedCount, failedCount, ageRestrictedTracks, failedTracks } = data;
     console.warn('[DOWNLOAD COMPLETION]', title, { ageRestrictedCount, failedCount, ageRestrictedTracks, failedTracks });
-    
+
     // Build detailed track list
     let trackDetails = '';
     if (ageRestrictedTracks.length > 0) {
@@ -121,7 +121,7 @@ ipcRenderer.on('show-download-completion-notice', (_, data) => {
     if (failedTracks.length > 0) {
       trackDetails += `\n\nFailed tracks: ${failedTracks.slice(0, 3).join(', ')}${failedTracks.length > 3 ? ` and ${failedTracks.length - 3} more...` : ''}`;
     }
-    
+
     // Show comprehensive notification
     showErrorNotification(
       title,
@@ -137,7 +137,7 @@ ipcRenderer.on('show-age-restricted-notice', (_, data) => {
   try {
     const { message, count, tracks } = data;
     console.warn('[AGE RESTRICTED]', message, { count, tracks });
-    
+
     // Show user-friendly notification
     showErrorNotification(
       'Age-Restricted Content',
@@ -210,7 +210,7 @@ function setPipelineGain(v) {
   try {
     const gv = (typeof v === 'number' && v > 0) ? v : SILENT_GAIN_FLOOR;
     gainNode.gain.value = gv;
-  } catch (_) {}
+  } catch (e) { frontendLogger.warn('setPipelineGain failed', e); }
 }
 
 // Global state
@@ -242,27 +242,27 @@ document.addEventListener('DOMContentLoaded', async () => {
   elements = {
     // Audio element managed via Web Audio API
     audioPlayer: audioElement,
-    
+
     // Loading
     loadingOverlay: document.getElementById('loading-overlay'),
     loadingMessage: document.getElementById('loading-message'),
-    
+
     // Playlists
     playlistsContainer: document.getElementById('playlists-container'),
     createPlaylistBtn: document.getElementById('create-playlist-btn'),
     currentPlaylistName: document.getElementById('current-playlist-name'),
     renamePlaylistBtn: document.getElementById('rename-playlist-btn'),
     deletePlaylistBtn: document.getElementById('delete-playlist-btn'),
-    
+
     // Tracks
     tracksContainer: document.getElementById('tracks-container'),
     tracksList: document.getElementById('tracks-list'),
     dropZone: document.getElementById('drop-zone'),
-    
+
     // Download
     urlInput: document.getElementById('url-input'),
     downloadBtn: document.getElementById('download-btn'),
-    
+
     // Player controls
     playPauseBtn: document.getElementById('play-pause-btn'),
     prevBtn: document.getElementById('prev-btn'),
@@ -276,18 +276,18 @@ document.addEventListener('DOMContentLoaded', async () => {
     totalTime: document.getElementById('total-time'),
     currentTrackTitle: document.getElementById('current-track-title'),
     currentTrackArtist: document.getElementById('current-track-artist'),
-    
+
     // Visualizer
     visualizer: document.getElementById('visualizer'),
     backgroundVisualizer: document.getElementById('background-visualizer'),
-    
+
     // Modals
     themeModal: document.getElementById('theme-modal'),
     settingsModal: document.getElementById('settings-modal'),
     backupModal: document.getElementById('backup-modal'),
     playlistNameModal: document.getElementById('playlist-name-modal'),
     trackRenameModal: document.getElementById('track-rename-modal'),
-    
+
     // Theme controls
     themeBtn: document.getElementById('theme-btn'),
     primaryColor: document.getElementById('primary-color'),
@@ -296,18 +296,18 @@ document.addEventListener('DOMContentLoaded', async () => {
     visualizerColor: document.getElementById('visualizer-color'),
     saveThemeBtn: document.getElementById('save-theme-btn'),
     resetThemeBtn: document.getElementById('reset-theme-btn'),
-    
+
     // Backup controls
     backupBtn: document.getElementById('backup-btn'),
     createBackupBtn: document.getElementById('create-backup-btn'),
     backupsList: document.getElementById('backups-list'),
-    
+
     // Settings controls
     settingsBtn: document.getElementById('settings-btn'),
     visualizerEnabled: document.getElementById('visualizer-enabled'),
     saveRepeatState: document.getElementById('save-repeat-state'),
     saveTrackTime: document.getElementById('save-track-time'),
-    
+
     // Broadcast controls
     broadcastEnabled: document.getElementById('broadcast-enabled'),
     broadcastHost: document.getElementById('broadcast-host'),
@@ -319,13 +319,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     broadcastStatus: document.getElementById('broadcast-status'),
     shareableUrl: document.getElementById('shareable-url'),
     copyUrlBtn: document.getElementById('copy-url-btn'),
-    
+
     // Playlist name modal
     playlistModalTitle: document.getElementById('playlist-modal-title'),
     playlistNameInput: document.getElementById('playlist-name-input'),
     savePlaylistNameBtn: document.getElementById('save-playlist-name-btn'),
     cancelPlaylistNameBtn: document.getElementById('cancel-playlist-name-btn'),
-    
+
     // Track rename modal
     trackNameInput: document.getElementById('track-name-input'),
     saveTrackNameBtn: document.getElementById('save-track-name-btn'),
@@ -334,7 +334,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   try {
     frontendLogger.info('DOM content loaded, initializing app');
     const startTime = Date.now();
-    
+
     appConfig = await ipcRenderer.invoke('get-app-config');
     await initializeApp();
     setupEventListeners();
@@ -344,15 +344,16 @@ document.addEventListener('DOMContentLoaded', async () => {
       setupBackgroundVisualizer();
     }
     setupErrorHandlers();
-    
+
     // Restore playback state after everything is initialized
     await restorePlaybackState();
     // Start UI ticker to keep time/progress responsive even if ontimeupdate is throttled
-    try { startUITicker(); } catch (_) {}
-    
+    try { startUITicker(); } catch (e) { frontendLogger.warn('startUITicker failed', e); }
+
     frontendLogger.info('App initialization completed successfully');
   } catch (error) {
     frontendLogger.error('Failed to initialize app', error);
+    showErrorNotification('Initialization Failed', 'The application failed to start correctly. Check logs for details.');
     throw error;
   }
 });
@@ -364,27 +365,27 @@ async function handleDownloadComplete({ playlistId, downloadedTracks }) {
     // Find the full playlist data from the master list
     const updatedPlaylist = playlists.find(p => p.id === playlistId);
     if (updatedPlaylist) {
-        // Manually add new tracks to the local playlist object to ensure it's up-to-date
-        // This is needed because the main process updates the file, but the renderer's state needs to be synced
-        downloadedTracks.forEach(newTrack => {
-            if (!currentPlaylist.tracks.some(t => t.id === newTrack.id)) {
-                currentPlaylist.tracks.push(newTrack);
-            }
-        });
-
-        // Re-render the tracks for the current playlist
-        renderTracks();
-    } else {
-        // If the playlist is not in the master list, reload all playlists
-        await loadPlaylists();
-        const newlyLoadedPlaylist = playlists.find(p => p.id === playlistId);
-        if (newlyLoadedPlaylist) {
-            await selectPlaylist(newlyLoadedPlaylist);
+      // Manually add new tracks to the local playlist object to ensure it's up-to-date
+      // This is needed because the main process updates the file, but the renderer's state needs to be synced
+      downloadedTracks.forEach(newTrack => {
+        if (!currentPlaylist.tracks.some(t => t.id === newTrack.id)) {
+          currentPlaylist.tracks.push(newTrack);
         }
+      });
+
+      // Re-render the tracks for the current playlist
+      renderTracks();
+    } else {
+      // If the playlist is not in the master list, reload all playlists
+      await loadPlaylists();
+      const newlyLoadedPlaylist = playlists.find(p => p.id === playlistId);
+      if (newlyLoadedPlaylist) {
+        await selectPlaylist(newlyLoadedPlaylist);
+      }
     }
   } else {
-      // If the download was for a different playlist, just reload the playlist list in the background
-      await loadPlaylists();
+    // If the download was for a different playlist, just reload the playlist list in the background
+    await loadPlaylists();
   }
 }
 
@@ -399,7 +400,7 @@ function setupDownloadListeners() {
     frontendLogger.info('Download finished, hiding loading overlay.');
   });
 
-  ipcRenderer.on('download-complete', (event, data) => handleDownloadComplete(data));
+  // Note: download-complete handler is defined later in the IPC event listeners section
 
   // Note: download-error handler is defined later with proper error notification
 }
@@ -407,28 +408,29 @@ function setupDownloadListeners() {
 async function initializeApp() {
   try {
     frontendLogger.info('Starting app initialization');
-    
+
     // Load theme first to ensure consistent styling
     await loadTheme();
-    
+
     // Apply theme consistency fixes
     applyThemeConsistencyFixes();
-    
+
     // Load app version
     await loadAppVersion();
-    
+
     // Load playlists
     await loadPlaylists();
-    
+
     // Load backups
     await loadBackups();
 
     // Set initial state for buttons
     updateDownloadButtonState();
-    
+
     frontendLogger.info('App initialized successfully');
   } catch (error) {
-    frontendLogger.error('Error initializing app', error);
+    frontendLogger.error('Error initializing app subsystems', error);
+    showErrorNotification('Critical Error', 'Failed to initialize app subsystems. Restarting may be required.');
     throw error;
   }
 }
@@ -451,6 +453,7 @@ async function loadTheme() {
     frontendLogger.info('Theme loaded successfully');
   } catch (error) {
     frontendLogger.error('Error loading theme', error);
+    showErrorNotification('Theme Error', 'Failed to load theme settings. Default styles will be used.');
   }
 }
 
@@ -471,29 +474,29 @@ function applyTheme(theme) {
   root.style.setProperty('--primary-color', theme.primaryColor);
   root.style.setProperty('--secondary-color', theme.secondaryColor);
   root.style.setProperty('--visualizer-color', theme.visualizerColor || '#10b981');
-  
+
   // Calculate theme-based text colors first
   const isLightBackground = getContrastColor(theme.secondaryColor).color === '#1f2937';
-  
+
   // Calculate slider handle color as a shade of primary color
   const sliderHandleColor = lightenColor(theme.primaryColor, 10);
   const sliderHandleBorder = lightenColor(theme.primaryColor, -30); // Darker border
   root.style.setProperty('--slider-handle-color', sliderHandleColor);
   root.style.setProperty('--slider-handle-border', sliderHandleBorder);
-  
+
   // Calculate placeholder color as a shade of secondary color
-  const placeholderColor = isLightBackground ? 
+  const placeholderColor = isLightBackground ?
     lightenColor(theme.secondaryColor, -20) : // Darker shade for light backgrounds
     lightenColor(theme.secondaryColor, 40);   // Lighter shade for dark backgrounds
   root.style.setProperty('--placeholder-color', placeholderColor);
-  
-  
+
+
   // Use user-defined text and icon color without outline
   const textColor = theme.textIconColor || '#ffffff';
-  
+
   // Create container colors that provide good contrast
   let containerColor, surfaceColor, borderColor;
-  
+
   if (isLightBackground) {
     // Light background - use darker containers
     containerColor = lightenColor(theme.secondaryColor, -20); // Darker secondary
@@ -505,11 +508,11 @@ function applyTheme(theme) {
     surfaceColor = lightenColor(theme.secondaryColor, 20);
     borderColor = lightenColor(theme.secondaryColor, 40);
   }
-  
+
   // Create hover tints for theme colors
   const primaryHover = lightenColor(theme.primaryColor, 15);
   const secondaryHover = lightenColor(theme.secondaryColor, 15);
-  
+
   // Apply calculated colors
   root.style.setProperty('--container-color', containerColor);
   root.style.setProperty('--surface-color', surfaceColor);
@@ -519,11 +522,11 @@ function applyTheme(theme) {
   root.style.setProperty('--theme-text-color', textColor);
   root.style.setProperty('--theme-text-shadow', 'none');
   root.style.setProperty('--theme-icon-color', textColor); // Icons use same color as text
-  
+
   // Apply theme text styling to body
   document.body.style.color = textColor;
   document.body.style.textShadow = 'none';
-  
+
   // Apply icon color to all SVG icons (excluding Ko-fi)
   applyIconColors(textColor);
 }
@@ -537,23 +540,23 @@ function applyIconColors(iconColor) {
     if (parentButton && parentButton.id === 'kofi-btn') {
       return;
     }
-    
+
     // Apply color to SVG stroke and fill
     svg.style.stroke = iconColor;
     if (svg.getAttribute('fill') !== 'none' && svg.getAttribute('fill') !== 'currentColor') {
       svg.style.fill = iconColor;
     }
   });
-  
+
   // Apply color to SVG images using stencil approach
   const svgImages = document.querySelectorAll('img[src$=".svg"]');
-  
+
   svgImages.forEach(img => {
     // Skip Ko-fi image
     if (img.classList.contains('kofi-image')) {
       return;
     }
-    
+
     // Use SVG as stencil - apply theme color directly
     applySVGStencilColor(img, iconColor);
   });
@@ -563,7 +566,7 @@ function applyIconColors(iconColor) {
 function applySVGStencilColor(imgElement, color) {
   // Use CSS mask to apply the SVG as a stencil with the theme color
   const originalSrc = imgElement.src;
-  
+
   // Create a wrapper div if it doesn't exist
   let wrapper = imgElement.parentElement;
   if (!wrapper.classList.contains('svg-stencil-wrapper')) {
@@ -571,20 +574,20 @@ function applySVGStencilColor(imgElement, color) {
     wrapper.className = 'svg-stencil-wrapper';
     imgElement.parentNode.insertBefore(wrapper, imgElement);
     wrapper.appendChild(imgElement);
-    
+
     // Apply wrapper styles
     wrapper.style.display = 'inline-block';
     wrapper.style.width = imgElement.width ? imgElement.width + 'px' : 'auto';
     wrapper.style.height = imgElement.height ? imgElement.height + 'px' : 'auto';
   }
-  
+
   // Apply stencil effect using CSS mask
   wrapper.style.backgroundColor = color;
   wrapper.style.webkitMask = `url(${originalSrc}) no-repeat center`;
   wrapper.style.mask = `url(${originalSrc}) no-repeat center`;
   wrapper.style.webkitMaskSize = 'contain';
   wrapper.style.maskSize = 'contain';
-  
+
   // Hide the original image
   imgElement.style.opacity = '0';
   imgElement.style.position = 'absolute';
@@ -608,7 +611,7 @@ function applyThemeConsistencyFixes() {
       });
     });
   });
-  
+
   observer.observe(document.body, {
     childList: true,
     subtree: true
@@ -656,7 +659,9 @@ function beginClock() {
     clockAnchorTrackTime = audioElement ? (audioElement.currentTime || 0) : 0;
     clockAnchorCtxTime = audioCtx ? (audioCtx.currentTime || 0) : 0;
     clockRunning = true;
-  } catch (_) {}
+  } catch (err) {
+    frontendLogger.warn('Failed to begin media clock tracking', err);
+  }
 }
 
 function pauseClock() {
@@ -666,14 +671,18 @@ function pauseClock() {
     clockAnchorTrackTime = nowT;
     clockAnchorCtxTime = audioCtx ? (audioCtx.currentTime || 0) : 0;
     clockRunning = false;
-  } catch (_) {}
+  } catch (err) {
+    frontendLogger.warn('Failed to pause media clock tracking', err);
+  }
 }
 
 function seekClock(newTime) {
   try {
     clockAnchorTrackTime = Math.max(0, Number(newTime) || 0);
     clockAnchorCtxTime = audioCtx ? (audioCtx.currentTime || 0) : 0;
-  } catch (_) {}
+  } catch (err) {
+    frontendLogger.warn('Failed to seek media clock anchor', err);
+  }
 }
 
 function getAccurateCurrentTime() {
@@ -687,7 +696,8 @@ function getAccurateCurrentTime() {
       return t;
     }
     return audioElement ? (audioElement.currentTime || 0) : 0;
-  } catch (_) {
+  } catch (err) {
+    frontendLogger.warn('Error reading accurate audio time, falling back to basic element time', err);
     return audioElement ? (audioElement.currentTime || 0) : 0;
   }
 }
@@ -695,6 +705,52 @@ function getAccurateCurrentTime() {
 function startUITicker() {
   try {
     const TICK_MS = 250; // 4 Hz
+    // Use a Web Worker for the ticker to avoid Chrome's background tab throttling (which caps setInterval at 1000ms)
+    const workerCode = `
+      let interval;
+      self.onmessage = function(e) {
+        if (e.data.command === 'start') {
+          interval = setInterval(() => self.postMessage('tick'), e.data.interval);
+        } else if (e.data.command === 'stop') {
+          clearInterval(interval);
+        }
+      };
+    `;
+    const blob = new Blob([workerCode], { type: 'application/javascript' });
+    const worker = new Worker(URL.createObjectURL(blob));
+
+    let lastBroadcastSync = 0;
+
+    worker.onmessage = () => {
+      try {
+        if (!audioElement) return;
+        const t = getAccurateCurrentTime();
+        if (elements.currentTime) elements.currentTime.textContent = formatTime(t);
+        if (elements.progressSlider) {
+          if (!elements.progressSlider.max || Number(elements.progressSlider.max) === 0) {
+            elements.progressSlider.max = audioElement.duration || 0;
+          }
+          elements.progressSlider.value = t;
+        }
+
+        // Unthrottled broadcast state update (~4 Hz)
+        const now = Date.now();
+        if (now - lastBroadcastSync > 250) {
+          lastBroadcastSync = now;
+          try { updateBroadcastState(); } catch (err) {
+            frontendLogger.warn('Failed to update broadcast state from worker ticker', err);
+          }
+        }
+      } catch (err) {
+        frontendLogger.warn('UI ticker worker onmessage encountered an error', err);
+      }
+    };
+
+    worker.postMessage({ command: 'start', interval: TICK_MS });
+  } catch (err) {
+    frontendLogger.warn('Failed to start UI ticker worker, falling back to setInterval', err);
+    const TICK_MS = 250;
+    let lastBroadcastSync = 0;
     setInterval(() => {
       try {
         if (!audioElement) return;
@@ -706,9 +762,19 @@ function startUITicker() {
           }
           elements.progressSlider.value = t;
         }
-      } catch (_) {}
+
+        const now = Date.now();
+        if (now - lastBroadcastSync > 250) {
+          lastBroadcastSync = now;
+          try { updateBroadcastState(); } catch (err) {
+            frontendLogger.warn('Failed to update broadcast state from interval ticker', err);
+          }
+        }
+      } catch (err) {
+        frontendLogger.warn('UI ticker interval encountered an error', err);
+      }
     }, TICK_MS);
-  } catch (_) {}
+  }
 }
 
 function updateThemeInputs(theme) {
@@ -728,13 +794,14 @@ async function loadPlaylists() {
     frontendLogger.info('Playlists loaded successfully', { count: playlists.length });
   } catch (error) {
     frontendLogger.error('Error loading playlists', error);
+    showErrorNotification('Load Error', 'Failed to load playlists.');
   }
 }
 
 function renderPlaylists() {
   frontendLogger.info(`Rendering ${playlists.length} playlists.`);
   elements.playlistsContainer.innerHTML = '';
-  
+
   if (!playlists || playlists.length === 0) {
     frontendLogger.warn('No playlists to render.');
     return;
@@ -746,6 +813,7 @@ function renderPlaylists() {
       elements.playlistsContainer.appendChild(playlistElement);
     } catch (error) {
       frontendLogger.error('Error creating playlist element', error, { playlistId: playlist?.id });
+      showErrorNotification('Render Error', `Failed to display playlist: ${playlist?.name || 'unknown'}`);
     }
   });
 }
@@ -806,32 +874,33 @@ function createPlaylistElement(playlist) {
 async function selectPlaylist(playlist) {
   try {
     frontendLogger.userAction('playlist-selected', { playlistId: playlist.id, playlistName: playlist.name, trackCount: playlist.tracks.length });
-    
+
     currentPlaylist = playlist;
-    
+
     // Update UI
     document.querySelectorAll('.playlist-item').forEach(item => {
       item.classList.remove('active');
     });
-    
+
     document.querySelector(`[data-playlist-id="${playlist.id}"]`).classList.add('active');
-    
+
     elements.currentPlaylistName.textContent = playlist.name;
 
 
     updateDownloadButtonState();
-    
+
     renderTracks();
-    
+
     // Generate shuffled indices if shuffle is enabled
     if (isShuffle) {
       generateShuffledIndices();
       frontendLogger.info('Generated shuffled indices for new playlist', { playlistId: playlist.id });
     }
-    
-    
+
+
   } catch (error) {
     frontendLogger.error('Error selecting playlist', error, { playlistId: playlist?.id });
+    showErrorNotification('Playlist Error', `Failed to select playlist: ${playlist?.name || 'unknown'}`);
   }
 }
 
@@ -880,7 +949,7 @@ function createTrackElement(track, index) {
   const actions = createDOMElement('div', 'track-actions');
   const volumeControl = createDOMElement('div', 'track-volume-control');
   volumeControl.draggable = false;
-  
+
   // Add volume icon
   const volumeIcon = createDOMElement('span', 'track-volume-icon');
   const getVolumeIcon = (volume) => {
@@ -893,14 +962,14 @@ function createTrackElement(track, index) {
     }
   };
   volumeIcon.innerHTML = getVolumeIcon(track.volume);
-  
+
   const volumeSlider = createDOMElement('input', 'slider track-volume-slider');
   volumeSlider.type = 'range';
   volumeSlider.min = 0;
   volumeSlider.max = 100;
   volumeSlider.value = track.volume * 100;
   volumeSlider.title = 'Track Volume';
-  
+
   volumeControl.append(volumeIcon, volumeSlider);
 
   const renameButton = createDOMElement('button', 'btn btn-small btn-icon btn-primary track-rename-btn');
@@ -916,17 +985,19 @@ function createTrackElement(track, index) {
 
   volumeSlider.addEventListener('input', async (e) => {
     track.volume = e.target.value / 100;
-    
+
     // Update the volume icon
     volumeIcon.innerHTML = getVolumeIcon(track.volume);
-    
+
     savePlaylist(true);
     if (currentTrack && currentTrack.id === track.id) {
       const finalVolume = track.volume * globalVolume;
       setPipelineGain(finalVolume);
     }
     // Notify broadcast server so remote stream applies new track volume
-    try { updateBroadcastState(); } catch (_) {}
+    try { updateBroadcastState(); } catch (err) {
+      frontendLogger.warn('Failed to update broadcast state on volume slider change', err);
+    }
   });
 
   dragHandle.addEventListener('dragstart', handleTrackDragStart);
@@ -982,14 +1053,14 @@ function resetPlayerUI() {
   elements.currentTime.textContent = '0:00';
   elements.totalTime.textContent = '0:00';
   if (elements.progressSlider) elements.progressSlider.value = 0;
-  
+
   // Clear playlist header data attributes for phone mode display
   const playlistHeader = document.querySelector('.playlist-header');
   if (playlistHeader) {
     playlistHeader.setAttribute('data-track-title', 'No track selected');
     playlistHeader.setAttribute('data-track-artist', '');
   }
-  
+
   const playIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-play icon-white"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>`;
   elements.playPauseBtn.innerHTML = playIcon;
   updateTrackHighlight();
@@ -1036,7 +1107,7 @@ async function playTrack(track, index) {
   audioElement.pause();
 
   try {
-    
+
     if (audioCtx.state === 'suspended') {
       await audioCtx.resume();
     }
@@ -1045,10 +1116,10 @@ async function playTrack(track, index) {
     if (!require('path').isAbsolute(track.filePath)) {
       absolutePath = require('path').join(require('path').dirname(require('path').dirname(__dirname)), 'data', track.filePath);
     }
-    
+
     const normalizedPath = absolutePath.replace(/\\/g, '/');
     const fileUrl = `file:///${normalizedPath}`;
-    
+
     audioElement.src = fileUrl;
     audioElement.load();
     audioElement.volume = 1;
@@ -1058,7 +1129,9 @@ async function playTrack(track, index) {
     currentTrack = track;
     currentTrackIndex = index;
     // Immediately publish new track state to broadcast server
-    try { updateBroadcastState(); } catch (_) {}
+    try { updateBroadcastState(); } catch (err) {
+      frontendLogger.warn('Failed to broadcast track state before playback start', err);
+    }
 
     const finalVolume = track.volume * globalVolume;
     setPipelineGain(finalVolume);
@@ -1071,7 +1144,9 @@ async function playTrack(track, index) {
       playPromise.then(() => {
         // Playback started successfully.
         isPlaying = true;
-        try { beginClock(); } catch (_) {}
+        try { beginClock(); } catch (err) {
+          frontendLogger.warn('Failed to begin media clock on successful play promise resolution', err);
+        }
         updatePlayerUI();
         updateTrackHighlight();
       }).catch(error => {
@@ -1081,15 +1156,16 @@ async function playTrack(track, index) {
       });
     }
 
-    
+
 
   } catch (error) {
-    frontendLogger.error('Error playing track', error, { 
-      trackId: track.id, 
-      trackName: track.name, 
-      filePath: track.filePath 
+    frontendLogger.error('Error playing track', error, {
+      trackId: track.id,
+      trackName: track.name,
+      filePath: track.filePath
     });
-    
+    showErrorNotification('Playback Error', `Failed to load track ${track.title || track.name}`);
+
     // Set failed attempt timestamp for cooldown logic
     if (lastPlayedTrack === track.id && playbackAttempts >= 3) {
       lastFailedAttemptTime = Date.now();
@@ -1102,7 +1178,7 @@ function updateRepeatIcon() {
   const iconSrc = isRepeat ? REPEAT_ICON : NO_REPEAT_ICON;
   elements.repeatBtn.innerHTML = `<img src="${iconSrc}" alt="${isRepeat ? 'Repeat enabled' : 'Repeat disabled'}" width="32" height="32">`;
   elements.repeatBtn.classList.toggle('active', isRepeat);
-  
+
   // Apply current theme color to the newly created SVG image using stencil approach
   const img = elements.repeatBtn.querySelector('img');
   if (img) {
@@ -1116,7 +1192,7 @@ function updateShuffleIcon() {
   const iconSrc = isShuffle ? SHUFFLE_ICON : NO_SHUFFLE_ICON;
   elements.shuffleBtn.innerHTML = `<img src="${iconSrc}" alt="${isShuffle ? 'Shuffle enabled' : 'Shuffle disabled'}" width="32" height="32">`;
   elements.shuffleBtn.classList.toggle('active', isShuffle);
-  
+
   // Apply current theme color to the newly created image using stencil approach
   const img = elements.shuffleBtn.querySelector('img');
   if (img) {
@@ -1134,17 +1210,17 @@ function generateShuffledIndices() {
     playedIndices = [];
     return;
   }
-  
+
   // Reset both arrays
   availableIndices = Array.from({ length: currentPlaylist.tracks.length }, (_, i) => i);
   playedIndices = [];
-  
+
   // Fisher-Yates shuffle the available indices
   for (let i = availableIndices.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
     [availableIndices[i], availableIndices[j]] = [availableIndices[j], availableIndices[i]];
   }
-  
+
   // Log the newly generated shuffle pool
   frontendLogger.info('Generated new shuffle pool', { availableIndices: [...availableIndices] });
 }
@@ -1152,7 +1228,7 @@ function generateShuffledIndices() {
 function toggleShuffle() {
   isShuffle = !isShuffle;
   updateShuffleIcon();
-  
+
   if (isShuffle) {
     // Generate new shuffle order when enabling shuffle
     generateShuffledIndices();
@@ -1163,7 +1239,7 @@ function toggleShuffle() {
     playedIndices = [];
     frontendLogger.info('Shuffle disabled');
   }
-  
+
   // Save shuffle state to config
   if (appConfig.playbackState) {
     appConfig.playbackState.isShuffle = isShuffle;
@@ -1174,37 +1250,21 @@ function toggleShuffle() {
 function setupAudioEventListeners() {
   let lastSaveTime = 0;
   const SAVE_INTERVAL = 5000; // Save every 5 seconds
-  
+
   audioElement.onloadedmetadata = () => {
     if (elements.totalTime) elements.totalTime.textContent = formatTime(audioElement.duration);
     if (elements.progressSlider) elements.progressSlider.max = audioElement.duration;
     // Inform broadcast listeners about new duration/metadata
-    try { updateBroadcastState(); } catch (_) {}
+    try { updateBroadcastState(); } catch (err) {
+      frontendLogger.warn('Failed to update broadcast state on loaded metadata', err);
+    }
   };
-  // Throttled UI updates for playback progress
-let lastUIUpdate = 0;
-const UI_UPDATE_INTERVAL = 250; // ms – 4 fps is plenty for time/progress display
-let lastBroadcastSync = 0; // throttle remote sync to ~4 Hz
-
   audioElement.ontimeupdate = () => {
     // Throttled save of playback position
-        const now = Date.now();
-    // Throttle UI change frequency to lower layout work
-    if (now - lastUIUpdate > UI_UPDATE_INTERVAL) {
-      lastUIUpdate = now;
-      if (elements.currentTime) elements.currentTime.textContent = formatTime(audioElement.currentTime);
-      if (elements.progressSlider) elements.progressSlider.value = audioElement.currentTime;
-    }
-    
+    const now = Date.now();
     if (now - lastSaveTime > SAVE_INTERVAL) {
       lastSaveTime = now;
       savePlaybackState();
-    }
-
-    // Throttle broadcast sync to keep remote time aligned (~4 Hz)
-    if (now - lastBroadcastSync > 250) {
-      lastBroadcastSync = now;
-      try { updateBroadcastState(); } catch (_) {}
     }
   };
 
@@ -1223,17 +1283,23 @@ let lastBroadcastSync = 0; // throttle remote sync to ~4 Hz
 
   // Notify broadcast on any seek (mouse, keyboard, programmatic)
   audioElement.onseeked = () => {
-    try { seekClock(audioElement ? (audioElement.currentTime || 0) : 0); } catch (_) {}
-    try { updateBroadcastState({ action: 'seek' }); } catch (_) {}
+    try { seekClock(audioElement ? (audioElement.currentTime || 0) : 0); } catch (err) {
+      frontendLogger.warn('Failed to seek clock on media seeked event', err);
+    }
+    try { updateBroadcastState({ action: 'seek' }); } catch (err) {
+      frontendLogger.warn('Failed to update broadcast state on media seeked event', err);
+    }
   };
 
   // Sync clock with core media events and keep rate normalized
   try {
-    audioElement.onplay = () => { try { beginClock(); } catch (_) {} };
-    audioElement.onpause = () => { try { pauseClock(); } catch (_) {} };
-    audioElement.onseeking = () => { try { seekClock(audioElement ? (audioElement.currentTime || 0) : 0); } catch (_) {} };
-    audioElement.onratechange = () => { try { audioElement.playbackRate = 1.0; } catch (_) {} };
-  } catch (_) {}
+    audioElement.onplay = () => { try { beginClock(); } catch (err) { frontendLogger.warn('Clock sync: onplay failed', err); } };
+    audioElement.onpause = () => { try { pauseClock(); } catch (err) { frontendLogger.warn('Clock sync: onpause failed', err); } };
+    audioElement.onseeking = () => { try { seekClock(audioElement ? (audioElement.currentTime || 0) : 0); } catch (err) { frontendLogger.warn('Clock sync: onseeking failed', err); } };
+    audioElement.onratechange = () => { try { audioElement.playbackRate = 1.0; } catch (err) { frontendLogger.warn('Clock sync: onratechange failed', err); } };
+  } catch (err) {
+    frontendLogger.warn('Failed to bind clock sync event listeners', err);
+  }
 
   audioElement.onerror = () => {
     // Ignore benign errors triggered when src is intentionally cleared (e.g., MEDIA_ELEMENT_ERROR: Empty src attribute)
@@ -1255,9 +1321,13 @@ let lastBroadcastSync = 0; // throttle remote sync to ~4 Hz
         if (audioElement) {
           audioElement.playbackRate = 1.0;
         }
-      } catch (_) {}
+      } catch (err) {
+        frontendLogger.warn('Error during visibility change visibility recovery', err);
+      }
     });
-  } catch (_) {}
+  } catch (err) {
+    frontendLogger.warn('Failed to bind visibilitychange event listener', err);
+  }
 }
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -1276,25 +1346,25 @@ function updatePlayerUI() {
     if (elements.currentTrackArtist) {
       elements.currentTrackArtist.textContent = currentTrack.artist || 'Unknown Artist';
     }
-    
+
     // Update playlist header data attributes for phone mode display
     const playlistHeader = document.querySelector('.playlist-header');
     if (playlistHeader) {
       playlistHeader.setAttribute('data-track-title', currentTrack.name);
       playlistHeader.setAttribute('data-track-artist', currentTrack.artist || 'Unknown Artist');
     }
-    
+
     const playIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-play icon-white"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>`;
     const pauseIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-pause icon-white"><rect x="6" y="4" width="4" height="16"></rect><rect x="14" y="4" width="4" height="16"></rect></svg>`;
     elements.playPauseBtn.innerHTML = isPlaying ? pauseIcon : playIcon;
     updateRepeatIcon();
     updateShuffleIcon();
-    
+
     // Update broadcast state
     updateBroadcastState();
   } else {
     resetPlayerUI();
-    
+
     // Update broadcast state for no track
     updateBroadcastState();
   }
@@ -1304,7 +1374,7 @@ function updateTrackHighlight() {
   document.querySelectorAll('.track-item').forEach(item => {
     item.classList.remove('playing');
   });
-  
+
   if (currentTrack) {
     const trackElement = document.querySelector(`[data-track-id="${currentTrack.id}"]`);
     if (trackElement) {
@@ -1323,17 +1393,17 @@ function setupAudioContext() {
     // Use the existing audioCtx instead of creating a new one
     audioContext = audioCtx;
     analyser = audioContext.createAnalyser();
-    
+
     // Connect the analyser to the existing audio pipeline
     // Insert analyser between gainNode and compressorNode
     gainNode.disconnect(compressorNode);
     gainNode.connect(analyser);
     analyser.connect(compressorNode);
-    
+
     analyser.fftSize = 256;
     const bufferLength = analyser.frequencyBinCount;
     dataArray = new Uint8Array(bufferLength);
-    
+
     frontendLogger.info('Audio context connected to visualizer successfully');
   } catch (error) {
     frontendLogger.error('Error setting up audio context', error);
@@ -1343,46 +1413,46 @@ function setupAudioContext() {
 function setupVisualizer() {
   const canvas = elements.visualizer;
   const ctx = canvas.getContext('2d');
-  
+
   function draw() {
     // Skip rendering when analyser isn't ready or when audio is not playing to save CPU
     if (!analyser || !dataArray || audioElement.paused) {
       animationId = requestAnimationFrame(draw);
       return;
     }
-    
+
     analyser.getByteFrequencyData(dataArray);
-    
+
     // Clear canvas completely for sharp bars
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    
+
     const barWidth = (canvas.width / dataArray.length) * 2.5;
     let barHeight;
     let x = 0;
-    
+
     // Get the current visualizer color from CSS
     const visualizerColor = getComputedStyle(document.documentElement).getPropertyValue('--visualizer-color').trim() || '#10b981';
     const rgb = hexToRgb(visualizerColor);
-    
+
     for (let i = 0; i < dataArray.length; i++) {
       barHeight = (dataArray[i] / 255) * canvas.height;
-      
+
       // Use theme color with intensity variations
       const intensity = barHeight / canvas.height;
       const r = Math.floor(rgb.r * intensity + (255 - rgb.r) * 0.2);
       const g = Math.floor(rgb.g * intensity + (255 - rgb.g) * 0.2);
       const b = Math.floor(rgb.b * intensity + (255 - rgb.b) * 0.2);
-      
+
       ctx.fillStyle = `rgb(${r},${g},${b})`;
       ctx.fillRect(x, canvas.height - barHeight, barWidth, barHeight);
-      
+
       x += barWidth + 1;
     }
-    
+
     // Schedule next frame and keep handle so we can cancel later
     animationId = requestAnimationFrame(draw);
   }
-  
+
   // Start the visualizer loop and store the frame id so it can be cancelled
   animationId = requestAnimationFrame(draw);
 }
@@ -1394,10 +1464,10 @@ function setupBackgroundVisualizer() {
     frontendLogger.error('Background visualizer canvas not found');
     return;
   }
-  
+
   frontendLogger.info('Setting up background visualizer', { canvas: !!canvas });
   const ctx = canvas.getContext('2d');
-  
+
   // Set canvas size to match the content area
   function resizeCanvas() {
     // Dynamically calculate sidebar and header sizes to support vertical / collapsed layouts
@@ -1414,58 +1484,58 @@ function setupBackgroundVisualizer() {
     canvas.width = window.innerWidth - visibleSidebarWidth;
     canvas.height = window.innerHeight - headerHeight;
   }
-  
+
   resizeCanvas();
   window.addEventListener('resize', resizeCanvas);
-  
+
   function drawBackground() {
     // Clear canvas completely for sharp bars (no fade effect)
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    
+
     // Get the current visualizer color from CSS
     const visualizerColor = getComputedStyle(document.documentElement).getPropertyValue('--visualizer-color').trim() || '#10b981';
     const rgb = hexToRgb(visualizerColor);
-    
+
     if (!analyser || !dataArray) {
       // Show a test pattern when no audio is playing
       const numBars = 64;
       const barWidth = canvas.width / numBars;
       const time = Date.now() * 0.001;
-      
+
       for (let i = 0; i < numBars; i++) {
         const barHeight = (Math.sin(time + i * 0.1) * 0.5 + 0.5) * canvas.height * 0.3;
         const alpha = 0.4;
-        
+
         ctx.fillStyle = `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${alpha})`;
         ctx.fillRect(i * barWidth, canvas.height - barHeight, barWidth - 1, barHeight);
       }
-      
+
       requestAnimationFrame(drawBackground);
       return;
     }
-    
+
     analyser.getByteFrequencyData(dataArray);
-    
+
     const barWidth = (canvas.width / dataArray.length) * 3;
     let barHeight;
     let x = 0;
-    
+
     for (let i = 0; i < dataArray.length; i++) {
       barHeight = (dataArray[i] / 255) * canvas.height * 0.9;
-      
+
       // Use theme color with higher alpha for sharp, visible bars
       const intensity = dataArray[i] / 255;
       const alpha = Math.max(0.3, intensity * 0.8); // Minimum alpha for visibility
-      
+
       ctx.fillStyle = `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${alpha})`;
       ctx.fillRect(x, canvas.height - barHeight, barWidth - 1, barHeight);
-      
+
       x += barWidth + 1;
     }
-    
+
     requestAnimationFrame(drawBackground);
   }
-  
+
   drawBackground();
 }
 
@@ -1501,7 +1571,7 @@ function setVolume(volume) {
   // active at normal speed even when unfocused.
   globalVolume = volume;
   updateVolumeIcon(volume);
-  
+
 }
 
 function toggleMute() {
@@ -1523,12 +1593,13 @@ async function loadBackups() {
     renderBackups(backups);
   } catch (error) {
     frontendLogger.error('Error loading backups', error);
+    showErrorNotification('Backup Error', 'Failed to load backups.');
   }
 }
 
 function renderBackups(backups) {
   elements.backupsList.innerHTML = '';
-  
+
   backups.forEach(backup => {
     const backupElement = createBackupElement(backup);
     elements.backupsList.appendChild(backupElement);
@@ -1577,6 +1648,7 @@ async function createBackup() {
     await loadBackups(); // Refresh the list
   } catch (error) {
     frontendLogger.error('Error creating backup', error);
+    showErrorNotification('Backup Error', 'Failed to create backup.');
   } finally {
     hideLoading();
   }
@@ -1589,11 +1661,12 @@ async function restoreBackup(backupPath) {
       showLoading('Restoring from backup...');
       await ipcRenderer.invoke('restore-backup', backupPath);
       frontendLogger.info('Backup restored successfully');
-      
+
       // Reload the app to apply changes
       window.location.reload();
     } catch (error) {
       frontendLogger.error('Error restoring backup', error);
+      showErrorNotification('Restore Error', 'Failed to restore backup.');
     } finally {
       hideLoading();
     }
@@ -1607,6 +1680,7 @@ async function deleteBackup(backupPath) {
       await loadBackups();
     } catch (error) {
       frontendLogger.error('Error deleting backup', error);
+      showErrorNotification('Backup Error', 'Failed to delete backup.');
     }
   }
 }
@@ -1628,12 +1702,16 @@ function setupEventListeners() {
     const THROTTLE = 250; // 4 per second
     if (now - lastSeekBroadcast >= THROTTLE) {
       lastSeekBroadcast = now;
-      try { updateBroadcastState({ action: 'seek' }); } catch (_) {}
+      try { updateBroadcastState({ action: 'seek' }); } catch (err) {
+        frontendLogger.warn('Failed to broadcast throttled seek event', err);
+      }
     } else {
       if (seekBroadcastTimer) clearTimeout(seekBroadcastTimer);
       seekBroadcastTimer = setTimeout(() => {
         lastSeekBroadcast = Date.now();
-        try { updateBroadcastState({ action: 'seek' }); } catch (_) {}
+        try { updateBroadcastState({ action: 'seek' }); } catch (err) {
+          frontendLogger.warn('Failed to broadcast throttled seek event', err);
+        }
       }, THROTTLE - (now - lastSeekBroadcast));
     }
   }
@@ -1650,7 +1728,9 @@ function setupEventListeners() {
   if (elements.progressSlider) elements.progressSlider.addEventListener('input', (e) => {
     if (audioElement) {
       audioElement.currentTime = e.target.value;
-      try { seekClock(e.target.value); } catch (_) {}
+      try { seekClock(e.target.value); } catch (err) {
+        frontendLogger.warn('Failed to seek clock on slider input', err);
+      }
       // Throttled broadcast while dragging
       scheduleSeekBroadcast();
     }
@@ -1660,18 +1740,22 @@ function setupEventListeners() {
     if (seekBroadcastTimer) { clearTimeout(seekBroadcastTimer); seekBroadcastTimer = null; }
     lastSeekBroadcast = Date.now();
     isSeekDragging = false;
-    try { seekClock(audioElement ? (audioElement.currentTime || 0) : 0); } catch (_) {}
-    try { updateBroadcastState({ action: 'seek' }); } catch (_) {}
+    try { seekClock(audioElement ? (audioElement.currentTime || 0) : 0); } catch (err) {
+      frontendLogger.warn('Failed to seek clock on slider change', err);
+    }
+    try { updateBroadcastState({ action: 'seek' }); } catch (err) {
+      frontendLogger.warn('Failed to broadcast seek event on slider change', err);
+    }
   });
   if (elements.volumeSlider) elements.volumeSlider.addEventListener('input', async (e) => {
     globalVolume = e.target.value / 100;
-    
+
     if (currentTrack && audioElement) {
       const finalVolume = currentTrack.volume * globalVolume;
       gainNode.gain.value = finalVolume;
     }
     updateVolumeIcon(globalVolume);
-    
+
   });
   if (elements.volumeBtn) {
     elements.volumeBtn.addEventListener('click', toggleMute);
@@ -1715,10 +1799,10 @@ function setupEventListeners() {
       });
     }
   };
-  
+
   setupExternalLink('kofi-btn', 'https://ko-fi.com/r60dr60d', 'kofi');
   setupExternalLink('github-btn', 'https://github.com/Ultikynnys/MasterMusicPlayer', 'github');
-  
+
   // Broadcast controls
   if (elements.generateTokenBtn) {
     elements.generateTokenBtn.addEventListener('click', async () => {
@@ -1735,7 +1819,7 @@ function setupEventListeners() {
       }
     });
   }
-  
+
   if (elements.openBroadcastBtn) {
     elements.openBroadcastBtn.addEventListener('click', async () => {
       try {
@@ -1750,7 +1834,7 @@ function setupEventListeners() {
       }
     });
   }
-  
+
   if (elements.copyUrlBtn) {
     elements.copyUrlBtn.addEventListener('click', async () => {
       try {
@@ -1771,11 +1855,11 @@ function setupEventListeners() {
   const settingsModal = document.getElementById('settings-modal');
   if (settingsModal) {
     const formElements = settingsModal.querySelectorAll('input[type="checkbox"], input[type="text"], input[type="number"], select, textarea');
-    
+
     formElements.forEach(element => {
       const configPath = element.dataset.configPath;
       if (!configPath) return; // Skip elements without config path
-      
+
       element.addEventListener('change', async (e) => {
         // Handle special cases that need immediate UI updates
         if (configPath === 'visualizer.enabled') {
@@ -1784,7 +1868,7 @@ function setupEventListeners() {
           // Handle broadcast settings changes
           await saveBroadcastSettings();
         }
-        
+
         // Auto-save all settings
         await saveSettings();
         frontendLogger.info('Setting auto-saved', { configPath, value: e.target.type === 'checkbox' ? e.target.checked : e.target.value });
@@ -1806,7 +1890,7 @@ function setupEventListeners() {
     { save: 'savePlaylistNameBtn', cancel: 'cancelPlaylistNameBtn', modal: 'playlist-name-modal', saveHandler: savePlaylistName },
     { save: 'saveTrackNameBtn', cancel: 'cancelTrackNameBtn', modal: 'track-rename-modal', saveHandler: saveTrackName }
   ];
-  
+
   modalButtons.forEach(({ save, cancel, modal, saveHandler }) => {
     if (elements[save]) elements[save].addEventListener('click', saveHandler);
     if (elements[cancel]) elements[cancel].addEventListener('click', () => hideModal(modal));
@@ -1815,7 +1899,7 @@ function setupEventListeners() {
   // Drag and drop
   elements.dropZone.addEventListener('dragover', handleDragOver);
   elements.dropZone.addEventListener('drop', handleFileDrop);
-  
+
   // Click to select files
   elements.dropZone.addEventListener('click', handleDropZoneClick);
 
@@ -1829,7 +1913,7 @@ function setupEventListeners() {
       e.stopPropagation();
       return;
     }
-    
+
     const renameBtn = e.target.closest('.track-rename-btn');
     const removeBtn = e.target.closest('.track-remove-btn');
 
@@ -1853,7 +1937,7 @@ function setupEventListeners() {
         removeTrackFromCurrentPlaylist(trackId);
       }
 
-      
+
     } else {
       const trackElement = e.target.closest('.track-item');
       if (trackElement) {
@@ -1864,7 +1948,7 @@ function setupEventListeners() {
       }
     }
   });
-  
+
   // Save playback state when window is about to close
   window.addEventListener('beforeunload', (e) => {
     // Use synchronous approach for beforeunload to ensure it completes
@@ -1872,13 +1956,13 @@ function setupEventListeners() {
       if (!appConfig.playbackState) {
         appConfig.playbackState = {};
       }
-      
+
       appConfig.playbackState.volume = globalVolume;
       appConfig.playbackState.currentTrackId = currentTrack ? currentTrack.id : null;
       appConfig.playbackState.currentPlaylistId = currentPlaylist ? currentPlaylist.id : null;
       appConfig.playbackState.currentTime = audioElement.currentTime || 0;
       appConfig.playbackState.isRepeat = isRepeat;
-      
+
       // Fire and forget - don't wait for response
       ipcRenderer.invoke('save-app-config', appConfig);
       frontendLogger.info('Playback state saved on window close');
@@ -1891,18 +1975,18 @@ function setupEventListeners() {
 // Player control functions
 function togglePlayPause() {
   if (!audioElement || !currentTrack) return;
-  
+
   if (isPlaying) {
     audioElement.pause();
     isPlaying = false;
-    try { pauseClock(); } catch (_) {}
+    try { pauseClock(); } catch (e) { frontendLogger.warn('pauseClock failed', e); }
   } else {
     // Recalculate volume before resuming playback
     if (currentTrack) {
       const finalVolume = currentTrack.volume * globalVolume;
       setPipelineGain(finalVolume);
     }
-    audioElement.play().then(() => { try { beginClock(); } catch (_) {} }).catch(error => {
+    audioElement.play().then(() => { try { beginClock(); } catch (e) { frontendLogger.warn('beginClock failed', e); } }).catch(error => {
       frontendLogger.error('Error playing audio', error);
     });
     isPlaying = true;
@@ -1913,29 +1997,32 @@ function togglePlayPause() {
 function playNext() {
   frontendLogger.info('playNext called', { currentTrackIndex, playlistLength: currentPlaylist ? currentPlaylist.tracks.length : 0, isShuffle, shuffleIndex });
   if (!currentPlaylist || currentPlaylist.tracks.length === 0) return;
-  
+
   let nextIndex;
-    if (isShuffle) {
-      if (availableIndices.length === 0) {
-        // All songs played, regenerate available indices
-        generateShuffledIndices();
-      }
-      
-      if (availableIndices.length > 0) {
-        frontendLogger.info('Shuffle pool before picking next', { availableIndices: [...availableIndices] });
-        // Pick the next song from available indices and track it
-        nextIndex = availableIndices.shift();
-        frontendLogger.info('Picked index from shuffle pool', { removedIndex: nextIndex, remainingPool: [...availableIndices] });
-        playedIndices.push(nextIndex);
-      } else {
-        // Fallback to normal behavior if shuffle generation failed
-        nextIndex = (currentTrackIndex + 1) % currentPlaylist.tracks.length;
-      }
-    } else {
-      // Normal sequential playback
-      nextIndex = (currentTrackIndex + 1) % currentPlaylist.tracks.length;
+  if (isShuffle) {
+    if (availableIndices.length === 0) {
+      // All songs played, regenerate available indices
+      generateShuffledIndices();
     }
-  
+
+    if (availableIndices.length > 0) {
+      frontendLogger.info('Shuffle pool before picking next', { availableIndices: [...availableIndices] });
+      // Pick the next song from available indices and track it
+      nextIndex = availableIndices.shift();
+      frontendLogger.info('Picked index from shuffle pool', { removedIndex: nextIndex, remainingPool: [...availableIndices] });
+      playedIndices.push(nextIndex);
+    } else {
+      // Shuffle generation completely exhausted or failed. Stop forcefully.
+      frontendLogger.error('Shuffle generation failed and pool exhausted.');
+      showErrorNotification('Playback Error', 'Failed to generate shuffle sequence.');
+      stopTrack();
+      return;
+    }
+  } else {
+    // Normal sequential playback
+    nextIndex = (currentTrackIndex + 1) % currentPlaylist.tracks.length;
+  }
+
   const nextTrack = currentPlaylist.tracks[nextIndex];
   playTrack(nextTrack, nextIndex);
 }
@@ -1943,26 +2030,33 @@ function playNext() {
 function playPrevious() {
   frontendLogger.info('playPrevious called', { currentTrackIndex, playlistLength: currentPlaylist ? currentPlaylist.tracks.length : 0, isShuffle, shuffleIndex });
   if (!currentPlaylist || currentPlaylist.tracks.length === 0) return;
-  
+
   let prevIndex;
-    if (isShuffle) {
-      if (playedIndices.length > 1) {
-        // Go back to the previously played song
-        playedIndices.pop(); // Remove current song
-        prevIndex = playedIndices[playedIndices.length - 1];
-        // Put the current song back into available indices
-        if (currentTrackIndex >= 0) {
-          availableIndices.unshift(currentTrackIndex);
-        }
-      } else {
-        // No previous songs in history, use fallback
-        prevIndex = currentTrackIndex === 0 ? currentPlaylist.tracks.length - 1 : currentTrackIndex - 1;
+  if (isShuffle) {
+    if (playedIndices.length > 1) {
+      // Go back to the previously played song
+      playedIndices.pop(); // Remove current song
+      prevIndex = playedIndices[playedIndices.length - 1];
+      // Put the current song back into available indices
+      if (currentTrackIndex >= 0) {
+        availableIndices.unshift(currentTrackIndex);
       }
     } else {
-      // Normal sequential playback
-      prevIndex = currentTrackIndex === 0 ? currentPlaylist.tracks.length - 1 : currentTrackIndex - 1;
+      // No previous songs in history. Instead of falling back to sequential previous,
+      // restart the current track to strictly enforce standard playback expectations.
+      frontendLogger.info('No previous history in shuffle mode, restarting current track');
+      if (typeof audioElement !== 'undefined' && audioElement) {
+        audioElement.currentTime = 0;
+        try { seekClock(0); } catch (err) { frontendLogger.warn('Seek clock failed', err); }
+        try { updateBroadcastState({ action: 'seek' }); } catch (err) { frontendLogger.warn('Broadcast seek failed', err); }
+      }
+      return;
     }
-  
+  } else {
+    // Normal sequential playback
+    prevIndex = currentTrackIndex === 0 ? currentPlaylist.tracks.length - 1 : currentTrackIndex - 1;
+  }
+
   const prevTrack = currentPlaylist.tracks[prevIndex];
   playTrack(prevTrack, prevIndex);
 }
@@ -1971,7 +2065,7 @@ function toggleRepeat() {
   isRepeat = !isRepeat;
   updateRepeatIcon();
   updatePlayerUI();
-  
+
 }
 
 function stopTrack() {
@@ -1995,7 +2089,7 @@ function showLoading(message) {
     messageElement.textContent = message;
   }
   overlay.classList.remove('hidden');
-  
+
   // Clear any existing timeout
   if (loadingTimeout) {
     clearTimeout(loadingTimeout);
@@ -2007,7 +2101,7 @@ function hideLoading() {
   console.log('hideLoading called'); // Debug log
   const overlay = document.getElementById('loading-overlay');
   overlay.classList.add('hidden');
-  
+
   // Clear the timeout when hiding
   if (loadingTimeout) {
     clearTimeout(loadingTimeout);
@@ -2015,84 +2109,53 @@ function hideLoading() {
   }
 }
 
-// Error notification system to replace alerts
-function showErrorNotification(title, message) {
-  frontendLogger.info('Showing error notification', { title, message });
-  
-  // Use the existing confirm modal but customize it for error display
+// Shared notification modal helper (DRY: used by both error and success notifications)
+function showNotificationModal(title, message) {
   const modal = document.getElementById('confirm-modal');
   const titleEl = document.getElementById('confirm-title');
   const messageEl = document.getElementById('confirm-message');
   const yesBtn = document.getElementById('confirm-yes-btn');
   const noBtn = document.getElementById('confirm-no-btn');
-  
-  // Customize for error notification
+
   titleEl.textContent = title;
   messageEl.textContent = message;
   yesBtn.textContent = 'OK';
-  noBtn.style.display = 'none'; // Hide the No button for error notifications
-  
-  // Setup close handler
+  noBtn.style.display = 'none';
+
   const cleanup = () => {
     yesBtn.removeEventListener('click', onClose);
     modal.querySelector('.modal-close').removeEventListener('click', onClose);
-    noBtn.style.display = ''; // Restore No button for future use
+    noBtn.style.display = '';
     hideModal('confirm-modal');
   };
-  
+
   const onClose = () => {
     cleanup();
   };
-  
+
   yesBtn.addEventListener('click', onClose);
   modal.querySelector('.modal-close').addEventListener('click', onClose);
-  
+
   showModal('confirm-modal');
   yesBtn.focus();
 }
 
-// Success notification system
+function showErrorNotification(title, message) {
+  frontendLogger.info('Showing error notification', { title, message });
+  showNotificationModal(title, message);
+}
+
 function showSuccessNotification(title, message) {
   frontendLogger.info('Showing success notification', { title, message });
-  
-  // Use the existing confirm modal but customize it for success display
-  const modal = document.getElementById('confirm-modal');
-  const titleEl = document.getElementById('confirm-title');
-  const messageEl = document.getElementById('confirm-message');
-  const yesBtn = document.getElementById('confirm-yes-btn');
-  const noBtn = document.getElementById('confirm-no-btn');
-  
-  // Customize for success notification
-  titleEl.textContent = title;
-  messageEl.textContent = message;
-  yesBtn.textContent = 'OK';
-  noBtn.style.display = 'none'; // Hide the No button for success notifications
-  
-  // Setup close handler
-  const cleanup = () => {
-    yesBtn.removeEventListener('click', onClose);
-    modal.querySelector('.modal-close').removeEventListener('click', onClose);
-    noBtn.style.display = ''; // Restore No button for future use
-    hideModal('confirm-modal');
-  };
-  
-  const onClose = () => {
-    cleanup();
-  };
-  
-  yesBtn.addEventListener('click', onClose);
-  modal.querySelector('.modal-close').addEventListener('click', onClose);
-  
-  showModal('confirm-modal');
-  yesBtn.focus();
+  showNotificationModal(title, message);
 }
 
 function formatTime(seconds) {
   if (isNaN(seconds)) return '0:00';
-  
+
   const minutes = Math.floor(seconds / 60);
   const remainingSeconds = Math.floor(seconds % 60);
-  
+
   return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
 }
 
@@ -2100,7 +2163,7 @@ function calculatePlaylistDuration(playlist) {
   if (!playlist.tracks || playlist.tracks.length === 0) {
     return 0;
   }
-  
+
   return playlist.tracks.reduce((total, track) => {
     // Handle null/undefined tracks or duration values
     if (!track || track.duration == null) {
@@ -2114,11 +2177,11 @@ function formatPlaylistInfo(playlist) {
   const trackCount = playlist.tracks.length;
   const totalDuration = calculatePlaylistDuration(playlist);
   const trackText = trackCount === 1 ? 'track' : 'tracks';
-  
+
   if (totalDuration === 0) {
     return `${trackCount} ${trackText}`;
   }
-  
+
   return `${trackCount} ${trackText} • ${formatTime(totalDuration)}`;
 }
 
@@ -2127,9 +2190,9 @@ function lightenColor(color, percent) {
   const r = parseInt(hex.substr(0, 2), 16);
   const g = parseInt(hex.substr(2, 2), 16);
   const b = parseInt(hex.substr(4, 2), 16);
-  
+
   let newR, newG, newB;
-  
+
   if (percent > 0) {
     // Lighten
     newR = Math.min(255, Math.floor(r + (255 - r) * (percent / 100)));
@@ -2142,7 +2205,7 @@ function lightenColor(color, percent) {
     newG = Math.max(0, Math.floor(g * factor));
     newB = Math.max(0, Math.floor(b * factor));
   }
-  
+
   return `#${newR.toString(16).padStart(2, '0')}${newG.toString(16).padStart(2, '0')}${newB.toString(16).padStart(2, '0')}`;
 }
 
@@ -2152,16 +2215,16 @@ function getContrastColor(backgroundColor) {
   const r = parseInt(hex.substr(0, 2), 16) / 255;
   const g = parseInt(hex.substr(2, 2), 16) / 255;
   const b = parseInt(hex.substr(4, 2), 16) / 255;
-  
+
   // Convert to linear RGB
   const toLinear = (c) => c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
   const rLinear = toLinear(r);
   const gLinear = toLinear(g);
   const bLinear = toLinear(b);
-  
+
   // Calculate luminance
   const luminance = 0.2126 * rLinear + 0.7152 * gLinear + 0.0722 * bLinear;
-  
+
   // Return appropriate text color and shadow
   if (luminance > 0.5) {
     // Light background - use dark text
@@ -2231,33 +2294,33 @@ function confirmDialog(message, title = 'Confirm') {
 // Download functionality
 async function downloadFromUrl() {
   frontendLogger.info('Download button clicked');
-  
+
   const url = elements.urlInput.value.trim();
   if (!url || !currentPlaylist) {
     frontendLogger.warn('Download attempted with missing URL or playlist', { url: !!url, hasPlaylist: !!currentPlaylist });
     showErrorNotification('Missing Information', 'Please enter a URL and select a playlist first.');
     return;
   }
-  
+
   const startTime = Date.now();
   try {
-    frontendLogger.userAction('download-from-url-initiated', { 
-      url, 
+    frontendLogger.userAction('download-from-url-initiated', {
+      url,
       playlistId: currentPlaylist.id,
-      playlistName: currentPlaylist.name 
+      playlistName: currentPlaylist.name
     });
-    
+
     // Show loading overlay immediately when download starts
     console.log('Starting download for URL:', url); // Debug log
     showLoading('Preparing download...');
-    
+
     console.log('Sending IPC download request...'); // Debug log
     const result = await ipcRenderer.invoke('download-from-url', {
       url: url,
       playlistId: currentPlaylist.id
     });
     console.log('IPC download request result:', result); // Debug log
-    
+
     elements.urlInput.value = '';
     frontendLogger.info('Download request sent successfully', { url });
   } catch (error) {
@@ -2267,32 +2330,7 @@ async function downloadFromUrl() {
   }
 }
 
-// Track removal function
-async function removeTrackFromPlaylist(trackId) {
-  if (!currentPlaylist) {
-    frontendLogger.warn('Cannot remove track: no current playlist');
-    return;
-  }
-  
-  // Remove track from current playlist
-  const trackIndex = currentPlaylist.tracks.findIndex(track => track.id === trackId);
-  if (trackIndex === -1) {
-    frontendLogger.warn('Track not found in playlist', null, { trackId });
-    return;
-  }
-  
-  const removedTrack = currentPlaylist.tracks[trackIndex];
-  currentPlaylist.tracks.splice(trackIndex, 1);
-  
-  frontendLogger.info(`Removed track: ${removedTrack.name} (${currentPlaylist.tracks.length} tracks remaining)`);
-  
-  // Save playlist changes to disk
-  await savePlaylist(true);
-  
-  // Refresh UI
-  renderTracks();
-  renderPlaylists();
-}
+// removeTrackFromPlaylist removed — dead code, removeTrackFromCurrentPlaylist is used instead
 
 // Playlist management functions
 function renamePlaylist(playlistId) {
@@ -2320,7 +2358,7 @@ async function deletePlaylist(playlistId) {
       }
 
       playlists = playlists.filter(p => p.id !== playlistId);
-      
+
       if (currentPlaylist && currentPlaylist.id === playlistId) {
         currentPlaylist = null;
         elements.currentPlaylistName.textContent = 'Select a playlist';
@@ -2329,10 +2367,11 @@ async function deletePlaylist(playlistId) {
         updateDownloadButtonState();
         renderTracks(); // Clear the track list
       }
-      
+
       renderPlaylists(); // Refresh the playlist list
     } catch (error) {
       frontendLogger.error('Error deleting playlist', error, { playlistId });
+      showErrorNotification('Playlist Error', 'Failed to delete playlist.');
     }
   }
 }
@@ -2349,7 +2388,7 @@ async function showPlaylistNameModal(isRename = false) {
     elements.playlistNameInput.value = '';
     elements.savePlaylistNameBtn.dataset.action = 'create';
   }
-  
+
   elements.playlistNameInput.removeAttribute('disabled');
   showModal('playlist-name-modal');
   // Ensure focus after any CSS/display updates
@@ -2369,9 +2408,9 @@ async function savePlaylistName() {
   await frontendLogger.userAction('playlist-name-save-clicked');
   const name = elements.playlistNameInput.value.trim();
   if (!name) return;
-  
+
   const action = elements.savePlaylistNameBtn.dataset.action;
-  
+
   try {
     if (action === 'create') {
       await frontendLogger.info('Creating new playlist', { name });
@@ -2392,10 +2431,11 @@ async function savePlaylistName() {
 
       renderPlaylists();
     }
-    
+
     hideModal('playlist-name-modal');
   } catch (error) {
     frontendLogger.error('Error saving playlist:', error);
+    showErrorNotification('Playlist Error', 'Failed to save playlist name.');
   }
 }
 
@@ -2406,10 +2446,10 @@ async function deleteCurrentPlaylist() {
 
 async function savePlaylist(skipRender = false) {
   if (!currentPlaylist) return;
-  
+
   try {
     await ipcRenderer.invoke('update-playlist', currentPlaylist);
-    
+
     // Update playlists array
     const index = playlists.findIndex(p => p.id === currentPlaylist.id);
     if (index !== -1) {
@@ -2420,6 +2460,7 @@ async function savePlaylist(skipRender = false) {
     }
   } catch (error) {
     frontendLogger.error('Error saving playlist:', error);
+    showErrorNotification('Playlist Error', 'Failed to save playlist.');
   }
 }
 
@@ -2436,9 +2477,9 @@ async function saveTrackName() {
   await frontendLogger.userAction('track-name-save-clicked');
   const trackId = elements.saveTrackNameBtn.dataset.trackId;
   const newName = elements.trackNameInput.value.trim();
-  
+
   if (!newName || !currentPlaylist) return;
-  
+
   const track = currentPlaylist.tracks.find(t => t.id === trackId);
   if (track) {
     await frontendLogger.info('Renaming track', { trackId: track.id, oldName: track.name, newName });
@@ -2446,27 +2487,12 @@ async function saveTrackName() {
     await savePlaylist(true);
     renderTracks();
   }
-  
+
   hideModal('track-rename-modal');
 }
 
-async function removeTrack(trackId) {
-  if (!currentPlaylist) return;
-  
-  if (await confirmDialog('Are you sure you want to remove this track?', 'Remove Track')) {
-    currentPlaylist.tracks = currentPlaylist.tracks.filter(t => t.id !== trackId);
-    await savePlaylist(true);
-    renderTracks();
-    
-    // Stop playing if this was the current track
-    if (currentTrack && currentTrack.id === trackId) {
-      stopTrack();
-      currentTrack = null;
-      currentTrackIndex = -1;
-      updateTrackHighlight();
-    }
-  }
-}
+// removeTrackFromPlaylist was removed — it was dead code, use removeTrackFromCurrentPlaylist instead
+
 
 // Drag and drop functionality
 function handleDragOver(e) {
@@ -2486,23 +2512,23 @@ function readFileAsArrayBuffer(file) {
 
 async function handleFileDrop(e) {
   e.preventDefault();
-  
+
   if (!currentPlaylist) {
     showErrorNotification('No Playlist Selected', 'Please select a playlist first');
     return;
   }
-  
+
   const files = Array.from(e.dataTransfer.files);
   const audioFiles = files.filter(file => {
     const ext = file.name.split('.').pop().toLowerCase();
     return ['mp3', 'flac', 'ogg', 'm4a', 'wav'].includes(ext);
   });
-  
+
   // Process files sequentially to avoid overwhelming the system
   for (const file of audioFiles) {
     try {
       let track;
-      
+
       // Check if file has a path (from file selector) or needs content reading (from drag & drop)
       if (file.path) {
         // File from file selector - use existing IPC handler
@@ -2519,7 +2545,7 @@ async function handleFileDrop(e) {
           playlistId: currentPlaylist.id
         });
       }
-      
+
       currentPlaylist.tracks.push(track);
       await savePlaylist(true);
       renderTracks();
@@ -2536,14 +2562,14 @@ async function handleDropZoneClick() {
     showErrorNotification('No Playlist Selected', 'Please select a playlist first');
     return;
   }
-  
+
   try {
     const result = await ipcRenderer.invoke('select-music-files');
-    
+
     if (result.canceled || !result.filePaths || result.filePaths.length === 0) {
       return;
     }
-    
+
     // Process selected files using the same logic as drag and drop
     for (const filePath of result.filePaths) {
       try {
@@ -2551,12 +2577,13 @@ async function handleDropZoneClick() {
           filePath: filePath,
           playlistId: currentPlaylist.id
         });
-        
+
         currentPlaylist.tracks.push(track);
         await savePlaylist(true);
         renderTracks();
       } catch (error) {
         frontendLogger.error('Error adding file', error, { filePath });
+        showErrorNotification('File Error', `Failed to add file: ${path.basename(filePath)}`);
       }
     }
   } catch (error) {
@@ -2579,15 +2606,15 @@ function handleTrackDragStart(e) {
 
 function handleTrackReorder(e) {
   e.preventDefault();
-  
+
   const draggedIndex = parseInt(e.dataTransfer.getData('text/plain'));
   const targetIndex = parseInt(e.target.closest('.track-item').dataset.trackIndex);
-  
+
   if (draggedIndex !== targetIndex) {
     const draggedTrack = currentPlaylist.tracks[draggedIndex];
     currentPlaylist.tracks.splice(draggedIndex, 1);
     currentPlaylist.tracks.splice(targetIndex, 0, draggedTrack);
-    
+
     savePlaylist(true);
     renderTracks();
 
@@ -2597,7 +2624,7 @@ function handleTrackReorder(e) {
       currentTrackIndex = currentPlaylist.tracks.findIndex(t => t?.id === currentTrack.id);
     }
   }
-  
+
   document.querySelectorAll('.track-item').forEach(item => {
     item.classList.remove('dragging');
   });
@@ -2605,17 +2632,17 @@ function handleTrackReorder(e) {
 
 function handleTrackDrop(e, playlistId) {
   e.preventDefault();
-  
+
   const draggedIndex = parseInt(e.dataTransfer.getData('text/plain'));
   const draggedTrack = currentPlaylist.tracks[draggedIndex];
-  
+
   if (playlistId !== currentPlaylist.id) {
     // Move track to different playlist
     const targetPlaylist = playlists.find(p => p.id === playlistId);
     if (targetPlaylist) {
       currentPlaylist.tracks.splice(draggedIndex, 1);
       targetPlaylist.tracks.push(draggedTrack);
-      
+
       savePlaylist(true);
       ipcRenderer.invoke('update-playlist', targetPlaylist);
       renderTracks();
@@ -2632,13 +2659,14 @@ async function saveTheme() {
     textIconColor: elements.textIconColor.value,
     visualizerColor: elements.visualizerColor.value
   };
-  
+
   try {
     await ipcRenderer.invoke('update-theme-config', theme);
     applyTheme(theme);
     hideModal('theme-modal');
   } catch (error) {
     frontendLogger.error('Error saving theme', error);
+    showErrorNotification('Theme Error', 'Failed to save theme.');
   }
 }
 
@@ -2649,13 +2677,14 @@ async function resetTheme() {
     textIconColor: '#ffffff',
     visualizerColor: '#10b981'
   };
-  
+
   try {
     await ipcRenderer.invoke('update-theme-config', defaultTheme);
     applyTheme(defaultTheme);
     updateThemeInputs(defaultTheme);
   } catch (error) {
     frontendLogger.error('Error resetting theme', error);
+    showErrorNotification('Theme Error', 'Failed to reset theme.');
   }
 }
 
@@ -2664,13 +2693,14 @@ async function loadSettings() {
   try {
     appConfig = await ipcRenderer.invoke('get-app-config');
     updateSettingsInputs(appConfig);
-    
+
     // Initialize broadcast UI
     await updateBroadcastUI();
-    
+
     return appConfig;
   } catch (error) {
     frontendLogger.error('Failed to load settings', error);
+    showErrorNotification('Settings Error', 'Failed to load settings.');
     return null;
   }
 }
@@ -2693,21 +2723,21 @@ function updateSettingsInputs(config) {
   // Automatically scan all form elements in settings modal
   const settingsModal = document.getElementById('settings-modal');
   const formElements = settingsModal.querySelectorAll('input[type="checkbox"], input[type="text"], input[type="number"], select, textarea');
-  
+
   // Process each form element based on its data attributes
   formElements.forEach(element => {
     const configPath = element.dataset.configPath;
     const defaultValue = element.dataset.defaultValue;
     if (!configPath) return; // Skip elements without config path
-    
+
     const pathParts = configPath.split('.');
     let configValue = config;
-    
+
     // Navigate through the config object to get the value
     for (const part of pathParts) {
       configValue = configValue?.[part];
     }
-    
+
     // Set the element value based on type, with fallback to default
     if (element.type === 'checkbox') {
       const defaultBool = defaultValue === 'true' || defaultValue === true;
@@ -2719,7 +2749,7 @@ function updateSettingsInputs(config) {
       element.value = configValue ?? (defaultValue || '');
     }
   });
-  
+
   // Handle special UI updates
   const visualizerEnabled = config.visualizer?.enabled ?? true;
   toggleVisualizerCanvas(visualizerEnabled);
@@ -2732,15 +2762,15 @@ async function saveSettings() {
   // Automatically scan all form elements in settings modal
   const settingsModal = document.getElementById('settings-modal');
   const formElements = settingsModal.querySelectorAll('input[type="checkbox"], input[type="text"], input[type="number"], select, textarea');
-  
+
   // Process each form element based on its data attributes
   formElements.forEach(element => {
     const configPath = element.dataset.configPath;
     if (!configPath) return; // Skip elements without config path
-    
+
     const pathParts = configPath.split('.');
     let configSection = newConfig;
-    
+
     // Navigate to the correct config section, creating objects as needed
     for (let i = 0; i < pathParts.length - 1; i++) {
       const part = pathParts[i];
@@ -2749,7 +2779,7 @@ async function saveSettings() {
       }
       configSection = configSection[part];
     }
-    
+
     // Set the value based on element type
     const finalKey = pathParts[pathParts.length - 1];
     if (element.type === 'checkbox') {
@@ -2801,10 +2831,10 @@ async function saveBroadcastSettings() {
     if (result.success) {
       // Update local config
       appConfig.broadcast = result.config;
-      
+
       // Update UI
       await updateBroadcastUI();
-      
+
       frontendLogger.info('Broadcast settings saved successfully');
     }
   } catch (error) {
@@ -2817,7 +2847,7 @@ async function updateBroadcastUI() {
   try {
     const status = await ipcRenderer.invoke('get-broadcast-status');
     updateBroadcastStatus(status.running, status.url);
-    
+
     if (status.config) {
       // Update form elements with current config
       if (elements.broadcastEnabled) elements.broadcastEnabled.checked = status.config.enabled;
@@ -2836,15 +2866,15 @@ function updateBroadcastStatus(isRunning, url) {
     elements.broadcastStatus.textContent = isRunning ? 'Running' : 'Stopped';
     elements.broadcastStatus.className = `status-indicator ${isRunning ? 'running' : 'stopped'}`;
   }
-  
+
   if (elements.shareableUrl) {
     elements.shareableUrl.value = url || '';
   }
-  
+
   if (elements.openBroadcastBtn) {
     elements.openBroadcastBtn.disabled = !isRunning || !url;
   }
-  
+
   if (elements.copyUrlBtn) {
     elements.copyUrlBtn.disabled = !url;
   }
@@ -2887,11 +2917,9 @@ function updateBroadcastState(extra = {}) {
 // Keep broadcasting state at ~1 Hz regardless of window focus, as some environments throttle
 // timeupdate events and timers when unfocused. This ensures remote clients keep receiving
 // the latest currentTime and play/pause status.
-try {
-  setInterval(() => {
-    try { updateBroadcastState(); } catch (_) {}
-  }, 1000);
-} catch (_) {}
+setInterval(() => {
+  try { updateBroadcastState(); } catch (e) { frontendLogger.warn('Broadcast heartbeat failed', e); }
+}, 1000);
 
 async function resetSettings() {
   // Automatically generate default config from form elements
@@ -2900,19 +2928,19 @@ async function resetSettings() {
       retryAttempts: 3 // Keep this as it's not a form element
     }
   };
-  
+
   // Scan form elements to build default config
   const settingsModal = document.getElementById('settings-modal');
   const formElements = settingsModal.querySelectorAll('input[type="checkbox"], input[type="text"], input[type="number"], select, textarea');
-  
+
   formElements.forEach(element => {
     const configPath = element.dataset.configPath;
     const defaultValue = element.dataset.defaultValue;
     if (!configPath || !defaultValue) return;
-    
+
     const pathParts = configPath.split('.');
     let configSection = defaultConfig;
-    
+
     // Navigate to the correct config section, creating objects as needed
     for (let i = 0; i < pathParts.length - 1; i++) {
       const part = pathParts[i];
@@ -2921,7 +2949,7 @@ async function resetSettings() {
       }
       configSection = configSection[part];
     }
-    
+
     // Set the default value based on element type
     const finalKey = pathParts[pathParts.length - 1];
     if (element.type === 'checkbox') {
@@ -2932,7 +2960,7 @@ async function resetSettings() {
       configSection[finalKey] = defaultValue;
     }
   });
-  
+
   try {
     const success = await ipcRenderer.invoke('save-app-config', defaultConfig);
     if (success) {
@@ -2954,14 +2982,14 @@ async function savePlaybackState() {
   if (isRestoringState) {
     return;
   }
-  
+
   if (!appConfig.playbackState) {
     appConfig.playbackState = {};
   }
-  
+
   // Update playback state in config
   appConfig.playbackState.volume = globalVolume;
-  
+
   // Only update track/playlist info if they exist, otherwise preserve existing values
   if (currentTrack && currentTrack.id) {
     appConfig.playbackState.currentTrackId = currentTrack.id;
@@ -2969,20 +2997,20 @@ async function savePlaybackState() {
   if (currentPlaylist && currentPlaylist.id) {
     appConfig.playbackState.currentPlaylistId = currentPlaylist.id;
   }
-  
+
   // Only save track time if setting is enabled
   if (appConfig.playbackState.saveTrackTime !== false) {
     appConfig.playbackState.currentTime = audioElement.currentTime || 0;
   }
-  
+
   // Only save repeat state if setting is enabled
   if (appConfig.playbackState.saveRepeatState !== false) {
     appConfig.playbackState.isRepeat = isRepeat;
   }
-  
+
   // Save shuffle state
   appConfig.playbackState.isShuffle = isShuffle;
-  
+
 }
 
 async function restorePlaybackState() {
@@ -2991,10 +3019,10 @@ async function restorePlaybackState() {
       frontendLogger.info('No playback state to restore');
       return;
     }
-    
+
     // Set flag to prevent saving during restoration
     isRestoringState = true;
-    
+
     const state = appConfig.playbackState;
     frontendLogger.info('Starting playback state restoration', state);
     console.log('Restoring playback state:', state);
@@ -3004,7 +3032,7 @@ async function restorePlaybackState() {
     console.log('Volume:', state.volume);
     console.log('Is repeat:', state.isRepeat);
     console.log('Is shuffle:', state.isShuffle);
-    
+
     // Restore volume
     if (typeof state.volume === 'number' && state.volume >= 0) {
       globalVolume = state.volume;
@@ -3016,20 +3044,20 @@ async function restorePlaybackState() {
       updateVolumeIcon(globalVolume);
       frontendLogger.info('Volume restored', { volume: globalVolume, sliderValue: elements.volumeSlider?.value });
     }
-    
+
     // Restore repeat state only if setting is enabled
     if (typeof state.isRepeat === 'boolean' && state.saveRepeatState !== false) {
       isRepeat = state.isRepeat;
       updateRepeatIcon();
     }
-    
+
     // Restore shuffle state
     if (typeof state.isShuffle === 'boolean') {
       isShuffle = state.isShuffle;
       updateShuffleIcon();
       // If shuffle was enabled, we'll regenerate shuffled indices when a playlist is selected
     }
-    
+
     // Restore playlist and track
     if (state.currentPlaylistId && state.currentTrackId) {
       console.log('Attempting to restore playlist and track');
@@ -3046,33 +3074,33 @@ async function restorePlaybackState() {
         };
         checkPlaylists();
       });
-      
+
       // Add a small delay to ensure everything is fully initialized
       await new Promise(resolve => setTimeout(resolve, 500));
-      
+
       console.log('Looking for playlist:', state.currentPlaylistId);
       console.log('Available playlists:', playlists.map(p => ({ id: p.id, name: p.name })));
-      
+
       const playlist = playlists.find(p => p.id === state.currentPlaylistId);
       if (playlist) {
         console.log('Found playlist:', playlist.name);
         selectPlaylist(playlist);
-        
+
         console.log('Looking for track:', state.currentTrackId);
         console.log('Available tracks:', playlist.tracks.map(t => ({ id: t.id, name: t.name })));
-        
+
         const trackIndex = playlist.tracks.findIndex(t => t.id === state.currentTrackId);
         if (trackIndex !== -1) {
           const track = playlist.tracks[trackIndex];
           console.log('Found track:', track.name, 'at index:', trackIndex);
-          
+
           // Load the track but don't auto-play
           currentTrack = track;
           currentTrackIndex = trackIndex;
-          
+
           // Set up audio source
           audioElement.src = track.filePath;
-          
+
           // Wait for metadata to load, then set current time
           audioElement.addEventListener('loadedmetadata', () => {
             // Only restore track time if setting is enabled
@@ -3082,7 +3110,7 @@ async function restorePlaybackState() {
             updatePlayerUI();
             updateTrackHighlight();
           }, { once: true });
-          
+
           frontendLogger.info('Restored track position', {
             trackName: track.name,
             currentTime: state.currentTime
@@ -3098,7 +3126,7 @@ async function restorePlaybackState() {
     } else {
       console.log('No playlist or track ID to restore');
     }
-    
+
   } catch (error) {
     frontendLogger.error('Failed to restore playback state', error);
   } finally {
@@ -3119,7 +3147,7 @@ function toggleVisualizerCanvas(enabled) {
 // Keyboard shortcuts
 function handleKeyboardShortcuts(e) {
   if (e.target.tagName === 'INPUT') return;
-  
+
   switch (e.code) {
     case 'Space':
       e.preventDefault();
@@ -3178,43 +3206,43 @@ function setupErrorHandlers() {
 
   // Enhanced audio error handling system
   let errorHandlingInProgress = false;
-  
+
   // Primary error handler - catches most errors
   audioElement.addEventListener('error', async (event) => {
     if (errorHandlingInProgress) return;
     await handleAudioError('error_event', event.target.error, audioElement.src);
   });
-  
+
   // Secondary handler - catches load failures
   audioElement.addEventListener('loadstart', () => {
     // Reset error flag when starting new load
     errorHandlingInProgress = false;
   });
-  
+
   // Catch network errors that don't trigger 'error' event
   audioElement.addEventListener('loadend', async () => {
     if (audioElement.networkState === HTMLMediaElement.NETWORK_NO_SOURCE && currentTrack) {
       await handleAudioError('network_no_source', null, audioElement.src);
     }
   });
-  
+
   async function handleAudioError(errorType, error, src) {
     if (errorHandlingInProgress || !currentTrack) return;
     errorHandlingInProgress = true;
-    
+
     frontendLogger.error(`Audio Error [${errorType}]`, error, {
       track: currentTrack.name,
       src: src
     });
-    
+
     // Don't remove tracks automatically - just skip to next track
     frontendLogger.warn(`Skipping problematic track: ${currentTrack.name} (track preserved in playlist)`);
-    
+
     // Set failed attempt timestamp for cooldown logic
     if (lastPlayedTrack === currentTrack.id) {
       lastFailedAttemptTime = Date.now();
     }
-    
+
     // Continue playback without removing the track
     if (currentPlaylist && currentPlaylist.tracks.length > 0) {
       setTimeout(() => playNext(), 100); // Small delay to avoid rapid loops
@@ -3227,56 +3255,9 @@ function setupErrorHandlers() {
 }
 
 // IPC event listeners
+// Note: worker-log and main-log handlers are defined at the top of the file (lines 88-108)
 
-// Simplified worker log forwarding
-ipcRenderer.on('worker-log', (event, logData) => {
-  const { level, message, data } = logData;
-  
-  // Only show worker errors and key progress info
-  if (level === 'error' || message.includes('Step') || message.includes('Progress')) {
-    const logMessage = data ? `${message} ${JSON.stringify(data)}` : message;
-    if (level === 'error') {
-      frontendLogger.error(logMessage);
-    } else {
-      frontendLogger.info(logMessage);
-    }
-  }
-});
-
-// Simplified main process log forwarding
-ipcRenderer.on('main-log', (event, logData) => {
-  const { level, message, data } = logData;
-  
-  // Only show important logs, filter out noise
-  if (level === 'error' || level === 'warn') {
-    const logMessage = data ? `[MAIN] ${message} ${JSON.stringify(data)}` : `[MAIN] ${message}`;
-    // Use console.log directly to avoid infinite loop with frontendLogger
-    if (level === 'error') {
-      console.error('[MAIN]', logMessage);
-    } else {
-      console.warn('[MAIN]', logMessage);
-    }
-  }
-});
-
-// Helper functions for the global loading overlay
-function showLoadingOverlay(message = 'Loading...') {
-  if (elements.loadingOverlay) {
-    elements.loadingOverlay.classList.remove('hidden');
-    if (elements.loadingMessage) {
-      elements.loadingMessage.textContent = message;
-    }
-  }
-}
-
-function hideLoadingOverlay() {
-  if (elements.loadingOverlay) {
-    elements.loadingOverlay.classList.add('hidden');
-    if (elements.loadingMessage) {
-      elements.loadingMessage.textContent = '';
-    }
-  }
-}
+// showLoadingOverlay/hideLoadingOverlay removed — use showLoading/hideLoading instead
 
 // Upload cookies.txt button handler
 try {
@@ -3310,9 +3291,9 @@ try {
   if (uploadCookiesBtn) {
     uploadCookiesBtn.addEventListener('click', async () => {
       try {
-        showLoadingOverlay('Uploading cookies.txt...');
+        showLoading('Uploading cookies.txt...');
         const success = await ipcRenderer.invoke('upload-cookies-file');
-        hideLoadingOverlay();
+        hideLoading();
         if (success) {
           showSuccessNotification('Cookies Uploaded', 'Your cookies.txt file has been saved successfully.');
           await updateCookiesStatus();
@@ -3320,7 +3301,7 @@ try {
           showErrorNotification('Upload Cancelled', 'No file was selected.');
         }
       } catch (err) {
-        hideLoadingOverlay();
+        hideLoading();
         frontendLogger.error('Failed to upload cookies.txt', err);
         showErrorNotification('Upload Error', 'Failed to upload cookies.txt. Please try again.');
       }
@@ -3367,7 +3348,7 @@ ipcRenderer.on('download-complete', async (event, data) => {
   frontendLogger.info('Download completed', data);
 
   resetDownloadProgress();
-  
+
   // Add a small delay so users can see the completion message
   setTimeout(() => {
     hideLoading();
@@ -3400,7 +3381,8 @@ function handleNewTracks(playlistId, tracksToAdd) {
     refreshPlaylistUI(playlistId);
     frontendLogger.info(`Playlist updated successfully with ${tracksToAdd.length} new track(s).`);
   } else {
-    frontendLogger.warn('Could not find the target playlist in the frontend. As a fallback, reloading all playlists.', { playlistId });
+    frontendLogger.warn('Target playlist sync error. Reloading full playlist tree.', { playlistId });
+    showErrorNotification('Desync Warning', 'The currently selected playlist data is out of sync. Reloading UI.');
     loadPlaylists();
   }
 }
@@ -3423,29 +3405,29 @@ ipcRenderer.on('download-progress', (event, { taskId, progress, trackInfo }) => 
       if (trackInfo.skippedTracks > 0) {
         message += ` (${trackInfo.skippedTracks} already exist)`;
       }
-    } else 
-    // Special case: initial metadata fetch
-    if (taskId === 'fetching-info') {
-      message = trackInfo.title;
-    } else if (trackInfo.completed !== undefined && trackInfo.total !== undefined) {
-      // Overall progress message
-      const progressPercent = typeof progress === 'number' ? `${progress}%` : '';
-      message = `${trackInfo.title} (${trackInfo.completed}/${trackInfo.total}) ${progressPercent}`;
-      
-      if (trackInfo.successful > 0 || trackInfo.failed > 0) {
-        const stats = [];
-        if (trackInfo.successful > 0) stats.push(`${trackInfo.successful} successful`);
-        if (trackInfo.failed > 0) stats.push(`${trackInfo.failed} failed`);
-        if (stats.length > 0) {
-          message += ` - ${stats.join(', ')}`;
+    } else
+      // Special case: initial metadata fetch
+      if (taskId === 'fetching-info') {
+        message = trackInfo.title;
+      } else if (trackInfo.completed !== undefined && trackInfo.total !== undefined) {
+        // Overall progress message
+        const progressPercent = typeof progress === 'number' ? `${progress}%` : '';
+        message = `${trackInfo.title} (${trackInfo.completed}/${trackInfo.total}) ${progressPercent}`;
+
+        if (trackInfo.successful > 0 || trackInfo.failed > 0) {
+          const stats = [];
+          if (trackInfo.successful > 0) stats.push(`${trackInfo.successful} successful`);
+          if (trackInfo.failed > 0) stats.push(`${trackInfo.failed} failed`);
+          if (stats.length > 0) {
+            message += ` - ${stats.join(', ')}`;
+          }
         }
+      } else {
+        // Individual track progress
+        const titlePart = trackInfo.title ? `"${trackInfo.title}"` : '...';
+        const progressPart = typeof progress === 'number' ? `${progress.toFixed(1)}%` : '';
+        message = `Downloading ${titlePart} ${progressPart}`.trim();
       }
-    } else {
-      // Individual track progress
-      const titlePart = trackInfo.title ? `"${trackInfo.title}"` : '...';
-      const progressPart = typeof progress === 'number' ? `${progress.toFixed(1)}%` : '';
-      message = `Downloading ${titlePart} ${progressPart}`.trim();
-    }
   } else {
     // Fallback message
     const progressPart = typeof progress === 'number' ? `${progress.toFixed(1)}%` : '';
@@ -3484,15 +3466,15 @@ ipcRenderer.on('download-error', (event, errorData) => {
     userAgent: navigator.userAgent,
     downloadInProgress: currentDownloadProgress.isDownloading
   });
-  
+
   // Reset progress tracking
   resetDownloadProgress();
-  
+
   hideLoading();
-  
+
   // Show proper UI notification instead of alert
   showErrorNotification(
-    'Download Failed', 
+    'Download Failed',
     errorData.error || 'Please check the URL and try again. See DevTools console for details.'
   );
 });
@@ -3519,15 +3501,15 @@ ipcRenderer.on('tracks-downloaded', (event, { playlistId, newTracks }) => {
 async function exportAllSongs() {
   try {
     frontendLogger.info('Export all songs requested');
-    
+
     // Show loading state
     showLoading('Preparing export...');
-    
+
     // Call the main process to handle the export
     const result = await ipcRenderer.invoke('export-all-songs');
-    
+
     hideLoading();
-    
+
     if (result.success) {
       showSuccessNotification('Export Complete', result.message);
       frontendLogger.info('Export completed successfully', {

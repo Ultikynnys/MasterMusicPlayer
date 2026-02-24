@@ -19,7 +19,9 @@ try {
   app.commandLine.appendSwitch('disable-background-timer-throttling');
   app.commandLine.appendSwitch('disable-renderer-backgrounding');
   app.commandLine.appendSwitch('disable-background-media-suspend');
-} catch (_) {}
+} catch (err) {
+  logger.warn('Failed to apply background throttling disable switches', err);
+}
 
 let mainWindow;
 let isDownloading = false;
@@ -47,7 +49,7 @@ async function initializeWorkerPool(ytDlpPath) {
     const maxWorkers = 16;
     const ffmpegPath = ffmpegHelper.getFFmpegPath();
     processWorkerPool = new ProcessWorkerPool(maxWorkers, ytDlpPath, ffmpegPath);
-    
+
     // Forward worker logs to renderer for UI console display
     processWorkerPool.on('workerLog', (logData) => {
       if (mainWindow && mainWindow.webContents) {
@@ -80,36 +82,36 @@ async function cleanupWorkerPool() {
 async function initializeBroadcastServer() {
   try {
     broadcastServer = new BroadcastServer();
-    
+
     // Set up event listeners
     broadcastServer.on('started', (info) => {
       logger.info('Broadcast server started', info);
       if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('broadcast-status-changed', { 
-          running: true, 
-          url: broadcastServer.getShareableUrl() 
+        mainWindow.webContents.send('broadcast-status-changed', {
+          running: true,
+          url: broadcastServer.getShareableUrl()
         });
       }
     });
-    
+
     broadcastServer.on('stopped', () => {
       logger.info('Broadcast server stopped');
       if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('broadcast-status-changed', { 
-          running: false, 
-          url: '' 
+        mainWindow.webContents.send('broadcast-status-changed', {
+          running: false,
+          url: ''
         });
       }
     });
-    
+
     broadcastServer.on('error', (error) => {
       logger.error('Broadcast server error', error);
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send('broadcast-error', { error: error.message });
       }
     });
-    
-    
+
+
     // Load and apply initial config
     const appConfig = await loadAppConfig();
     if (appConfig.broadcast) {
@@ -123,7 +125,7 @@ async function initializeBroadcastServer() {
         logger.info('Persisted broadcast access token to app config');
       }
     }
-    
+
     // Load and apply theme config
     try {
       const themeConfigPath = path.join(configPath, 'theme.json');
@@ -134,7 +136,7 @@ async function initializeBroadcastServer() {
     } catch (error) {
       logger.error('Failed to load theme config for broadcast', error);
     }
-    
+
     logger.info('Broadcast server initialized');
   } catch (error) {
     logger.error('Failed to initialize broadcast server', error);
@@ -220,6 +222,7 @@ async function createDataDirectories() {
     logger.info('Data directories created or verified');
   } catch (error) {
     logger.error('Failed to create data directories', error);
+    throw error;
   }
 }
 
@@ -267,9 +270,9 @@ async function loadAppConfig() {
           ...(config.broadcast || {})
         }
       };
-      logger.info('Loaded app config with playback state', { 
+      logger.info('Loaded app config with playback state', {
         hasPlaybackState: !!mergedConfig.playbackState,
-        playbackState: mergedConfig.playbackState 
+        playbackState: mergedConfig.playbackState
       });
       return mergedConfig;
     }
@@ -286,7 +289,7 @@ async function saveAppConfig(config) {
     return true;
   } catch (error) {
     logger.error('Failed to save app config', error);
-    return false;
+    throw error;
   }
 }
 
@@ -296,16 +299,16 @@ function getYtDlpArgs(baseArgs, appConfig) {
   if (baseArgs && Array.isArray(baseArgs)) {
     return baseArgs;
   }
-  
+
   // Fallback arguments for compatibility
   return ['--dump-single-json', '--flat-playlist', '--no-warnings'];
 }
 
 function createWindow() {
   try {
-    
+
     logger.info('Creating main window');
-    
+
     mainWindow = new BrowserWindow({
       width: 1200,
       height: 800,
@@ -354,7 +357,7 @@ function createWindow() {
         ]
       }
     ];
-    
+
     const menu = Menu.buildFromTemplate(template);
     Menu.setApplicationMenu(menu);
 
@@ -373,40 +376,40 @@ app.whenReady().then(async () => {
   await createDataDirectories();
   // Initialize file lock
   fileLock = new FileLock(path.join(appDataPath, 'locks'));
-  
+
   // Show window immediately for fast startup
   createWindow();
   logger.info('Window created, starting background initialization...');
-  
+
   // Track background initialization state
   let backgroundInitPromise = null;
-  
+
   // Defer heavy initialization to background
   backgroundInitPromise = new Promise(async (resolve) => {
     try {
       logger.info('Initializing FFmpeg...');
       await ffmpegHelper.initialize();
       logger.info('FFmpeg initialization completed');
-      
+
       logger.info('Ensuring yt-dlp is available...');
       await ytDlpHelper.ensureYtDlp();
       logger.info('yt-dlp ensure process completed');
-      
+
       const ytDlpPath = ytDlpHelper.getYtDlpPath();
       const isReady = ytDlpHelper.isYtDlpReady();
-      
+
       logger.info('yt-dlp status check', { path: ytDlpPath, ready: isReady });
-      
+
       if (ytDlpPath && isReady) {
         await initializeWorkerPool(ytDlpPath);
         logger.info('Worker pool initialized successfully');
       } else {
         logger.error('yt-dlp not ready after ensure process', { path: ytDlpPath, ready: isReady });
       }
-      
+
       // Initialize broadcast server
       await initializeBroadcastServer();
-      
+
       logger.info('Background initialization completed successfully');
       resolve();
     } catch (error) {
@@ -414,28 +417,28 @@ app.whenReady().then(async () => {
       resolve(); // Still resolve to avoid hanging
     }
   });
-  
+
   // Make backgroundInitPromise globally accessible
   global.backgroundInitPromise = backgroundInitPromise;
-    
-    // Run duration scan in background after app is ready (non-blocking)
-    setTimeout(async () => {
-      try {
-        const result = await scanAndUpdateTrackDurations();
-        if (result.updated > 0) {
 
-          // Notify renderer if any tracks were updated
-          if (mainWindow && !mainWindow.isDestroyed()) {
-            mainWindow.webContents.send('durations-updated', result);
-          }
-        } else {
+  // Run duration scan in background after app is ready (non-blocking)
+  setTimeout(async () => {
+    try {
+      const result = await scanAndUpdateTrackDurations();
+      if (result.updated > 0) {
 
+        // Notify renderer if any tracks were updated
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('durations-updated', result);
         }
-      } catch (error) {
-        logger.error('Error during background duration scan', error);
+      } else {
+
       }
-    }, 3000); // Wait 3 seconds after app startup
-    
+    } catch (error) {
+      logger.error('Error during background duration scan', error);
+    }
+  }, 3000); // Wait 3 seconds after app startup
+
   app.on('activate', () => {
     logger.systemEvent('app-activated');
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -446,13 +449,7 @@ app.whenReady().then(async () => {
 
 
 
-app.on('window-all-closed', () => {
-  logger.systemEvent('all-windows-closed', { platform: process.platform });
-  if (process.platform !== 'darwin') {
-    logger.info('Quitting application');
-    app.quit();
-  }
-});
+// window-all-closed handler is registered at the bottom of the file with cleanup logic
 
 // IPC error handling wrapper
 function withErrorHandling(channel, handler) {
@@ -483,7 +480,7 @@ ipcMain.handle('get-playlists', async () => {
     logger.userAction('get-playlists-requested');
     const files = await fs.readdir(playlistsPath);
     const playlists = [];
-    
+
     for (const file of files) {
       if (file.endsWith('.json')) {
         const playlistData = await fs.readJson(path.join(playlistsPath, file));
@@ -508,11 +505,11 @@ ipcMain.handle('get-playlists', async () => {
         playlists.push(playlistData);
       }
     }
-    
+
     return playlists;
   } catch (error) {
     logger.error('Error getting playlists', error);
-    return [];
+    throw error;
   }
 });
 
@@ -526,7 +523,7 @@ withErrorHandling('create-playlist', async (event, name) => {
       tracks: [],
       createdAt: new Date().toISOString()
     };
-    
+
     await fs.writeJson(path.join(playlistsPath, `${playlist.id}.json`), playlist);
     logger.info('Playlist created successfully', { playlistId: playlist.id, name });
     return playlist;
@@ -639,14 +636,14 @@ async function cleanupOrphanedFiles(referencedFiles) {
   try {
     const songFiles = await fs.readdir(songsPath);
     let deletedCount = 0;
-    
+
     for (const file of songFiles) {
       const filePath = path.join(songsPath, file);
       const stats = await fs.stat(filePath);
-      
+
       // Skip directories
       if (stats.isDirectory()) continue;
-      
+
       // Check if this file is referenced by any playlist
       if (!referencedFiles.has(filePath)) {
         try {
@@ -658,7 +655,7 @@ async function cleanupOrphanedFiles(referencedFiles) {
         }
       }
     }
-    
+
     if (deletedCount > 0) {
       logger.info(`Cleaned up ${deletedCount} orphaned audio files`);
     }
@@ -679,7 +676,7 @@ withErrorHandling('get-app-version', async () => {
     return packageData.version;
   } catch (error) {
     logger.error('Error reading app version from package.json', error);
-    return '1.0.0'; // fallback version
+    throw error;
   }
 });
 
@@ -700,12 +697,12 @@ withErrorHandling('get-theme-config', async () => {
 withErrorHandling('update-theme-config', async (event, theme) => {
   const configFile = path.join(configPath, 'theme.json');
   await fs.writeJson(configFile, theme, { spaces: 2 });
-  
+
   // Update broadcast server theme
   if (broadcastServer) {
     broadcastServer.updateTheme(theme);
   }
-  
+
   logger.info('Theme config updated successfully');
   return { success: true };
 });
@@ -715,14 +712,14 @@ withErrorHandling('update-broadcast-config', async (event, config) => {
   if (!broadcastServer) {
     throw new Error('Broadcast server not initialized');
   }
-  
+
   const updatedConfig = broadcastServer.updateConfig(config);
-  
+
   // Save to app config
   const appConfig = await loadAppConfig();
   appConfig.broadcast = updatedConfig;
   await saveAppConfig(appConfig);
-  
+
   logger.info('Broadcast config updated successfully');
   return { success: true, config: updatedConfig };
 });
@@ -731,7 +728,7 @@ withErrorHandling('get-broadcast-status', async () => {
   if (!broadcastServer) {
     return { running: false, url: '' };
   }
-  
+
   return {
     running: broadcastServer.isRunning,
     url: broadcastServer.isRunning ? broadcastServer.getShareableUrl() : '',
@@ -743,15 +740,15 @@ withErrorHandling('generate-broadcast-token', async () => {
   if (!broadcastServer) {
     throw new Error('Broadcast server not initialized');
   }
-  
+
   const newToken = broadcastServer.generateAccessToken();
   const updatedConfig = broadcastServer.updateConfig({ accessToken: newToken });
-  
+
   // Save to app config
   const appConfig = await loadAppConfig();
   appConfig.broadcast = updatedConfig;
   await saveAppConfig(appConfig);
-  
+
   logger.info('New broadcast token generated');
   return { success: true, token: newToken, url: broadcastServer.getShareableUrl() };
 });
@@ -760,7 +757,7 @@ withErrorHandling('update-broadcast-state', async (event, state) => {
   if (!broadcastServer) {
     return;
   }
-  
+
   broadcastServer.updateState(state);
   logger.debug('Broadcast state updated from renderer');
   // Keep the app from being throttled/suspended while playing, regardless of focus
@@ -788,70 +785,70 @@ withErrorHandling('update-broadcast-state', async (event, state) => {
  */
 async function scanAndUpdateTrackDurations() {
 
-    let updated = 0;
-    let failed = 0;
-    
-    try {
-        const playlistFiles = await fs.readdir(playlistsPath);
-        
-        for (const file of playlistFiles) {
-            if (!file.endsWith('.json')) continue;
-            
-            const playlistPath = path.join(playlistsPath, file);
-            const playlist = await fs.readJson(playlistPath);
-            let playlistUpdated = false;
-            
-            if (playlist.tracks && Array.isArray(playlist.tracks)) {
-                for (const track of playlist.tracks) {
-                    // Ensure track and track.filePath are valid
-                    if (!track || !track.filePath) {
-                        logger.warn('Skipping invalid track entry in playlist');
-                        continue;
-                    }
+  let updated = 0;
+  let failed = 0;
 
-                    // Check if track is missing duration or has invalid duration
-                    if (!track.duration || track.duration <= 0) {
-                        logger.info(`Found track without duration: ${track.name}`);
-                        
-                        // Check if the file exists
-                        const absPath = toAbsolutePath(track.filePath);
-                        if (absPath && await fs.pathExists(absPath)) {
-                            try {
-                                const extractedDuration = await extractAudioDuration(absPath);
-                                if (extractedDuration && extractedDuration > 0) {
-                                    track.duration = extractedDuration;
-                                    playlistUpdated = true;
-                                    updated++;
-                                    logger.info(`Updated duration for track: ${track.name} -> ${extractedDuration}s`);
-                                } else {
-                                    failed++;
-                                    logger.warn(`Failed to extract duration for track: ${track.name}`);
-                                }
-                            } catch (error) {
-                                failed++;
-                                logger.error(`Error extracting duration for track: ${track.name}`, error);
-                            }
-                        } else {
-                            failed++;
-                            logger.warn(`Track file not found: ${track.filePath}`);
-                        }
-                    }
+  try {
+    const playlistFiles = await fs.readdir(playlistsPath);
+
+    for (const file of playlistFiles) {
+      if (!file.endsWith('.json')) continue;
+
+      const playlistPath = path.join(playlistsPath, file);
+      const playlist = await fs.readJson(playlistPath);
+      let playlistUpdated = false;
+
+      if (playlist.tracks && Array.isArray(playlist.tracks)) {
+        for (const track of playlist.tracks) {
+          // Ensure track and track.filePath are valid
+          if (!track || !track.filePath) {
+            logger.warn('Skipping invalid track entry in playlist');
+            continue;
+          }
+
+          // Check if track is missing duration or has invalid duration
+          if (!track.duration || track.duration <= 0) {
+            logger.info(`Found track without duration: ${track.name}`);
+
+            // Check if the file exists
+            const absPath = toAbsolutePath(track.filePath);
+            if (absPath && await fs.pathExists(absPath)) {
+              try {
+                const extractedDuration = await extractAudioDuration(absPath);
+                if (extractedDuration && extractedDuration > 0) {
+                  track.duration = extractedDuration;
+                  playlistUpdated = true;
+                  updated++;
+                  logger.info(`Updated duration for track: ${track.name} -> ${extractedDuration}s`);
+                } else {
+                  failed++;
+                  logger.warn(`Failed to extract duration for track: ${track.name}`);
                 }
+              } catch (error) {
+                failed++;
+                logger.error(`Error extracting duration for track: ${track.name}`, error);
+              }
+            } else {
+              failed++;
+              logger.warn(`Track file not found: ${track.filePath}`);
             }
-            
-            // Save the playlist if any tracks were updated
-            if (playlistUpdated) {
-                await fs.writeJson(playlistPath, playlist);
-            }
+          }
         }
-        
-      
-        return { updated, failed };
-        
-    } catch (error) {
-        logger.error('Error during track duration scan', error);
-        return { updated, failed };
+      }
+
+      // Save the playlist if any tracks were updated
+      if (playlistUpdated) {
+        await fs.writeJson(playlistPath, playlist);
+      }
     }
+
+
+    return { updated, failed };
+
+  } catch (error) {
+    logger.error('Error during track duration scan', error);
+    return { updated, failed };
+  }
 }
 
 /**
@@ -860,556 +857,558 @@ async function scanAndUpdateTrackDurations() {
  * @returns {Promise<number|null>} Duration in seconds or null if extraction fails
  */
 async function extractAudioDuration(filePath) {
-    return new Promise((resolve) => {
-        // Try ffprobe first (most reliable)
-        const ffprobePath = ffmpegHelper.getFFprobePath();
-        if (!ffprobePath) {
-            logger.warn('FFprobe not available, skipping duration extraction', { filePath });
-            return resolve(null);
+  return new Promise((resolve) => {
+    // Try ffprobe first (most reliable)
+    const ffprobePath = ffmpegHelper.getFFprobePath();
+    if (!ffprobePath) {
+      logger.warn('FFprobe not available, skipping duration extraction', { filePath });
+      return resolve(null);
+    }
+
+    exec(`"${ffprobePath}" -v quiet -show_entries format=duration -of csv=p=0 "${filePath}"`, (error, stdout) => {
+      if (!error && stdout.trim()) {
+        const duration = parseFloat(stdout.trim());
+        if (!isNaN(duration) && duration > 0) {
+          logger.info(`Extracted duration from audio file: ${duration}s`, { filePath });
+          return resolve(duration);
         }
-        
-        exec(`"${ffprobePath}" -v quiet -show_entries format=duration -of csv=p=0 "${filePath}"`, (error, stdout) => {
-            if (!error && stdout.trim()) {
-                const duration = parseFloat(stdout.trim());
-                if (!isNaN(duration) && duration > 0) {
-                    logger.info(`Extracted duration from audio file: ${duration}s`, { filePath });
-                    return resolve(duration);
-                }
+      }
+
+      // Fallback: try using yt-dlp to get duration from the file
+      const ytDlpExecutablePath = ytDlpHelper.getYtDlpPath();
+      if (ytDlpExecutablePath) {
+        exec(`"${ytDlpExecutablePath}" --dump-single-json "${filePath}"`, (error, stdout) => {
+          if (!error && stdout.trim()) {
+            try {
+              const info = JSON.parse(stdout.trim());
+              if (info.duration && info.duration > 0) {
+                logger.info(`Extracted duration using yt-dlp: ${info.duration}s`, { filePath });
+                return resolve(info.duration);
+              }
+            } catch (e) {
+              logger.debug('Failed to parse yt-dlp duration output', e);
             }
-            
-            // Fallback: try using yt-dlp to get duration from the file
-            const ytDlpExecutablePath = ytDlpHelper.getYtDlpPath();
-            if (ytDlpExecutablePath) {
-                exec(`"${ytDlpExecutablePath}" --dump-single-json "${filePath}"`, (error, stdout) => {
-                    if (!error && stdout.trim()) {
-                        try {
-                            const info = JSON.parse(stdout.trim());
-                            if (info.duration && info.duration > 0) {
-                                logger.info(`Extracted duration using yt-dlp: ${info.duration}s`, { filePath });
-                                return resolve(info.duration);
-                            }
-                        } catch (e) {
-                            logger.debug('Failed to parse yt-dlp duration output', e);
-                        }
-                    }
-                    
-                    logger.warn('Could not extract duration from audio file', { filePath });
-                    resolve(null);
-                });
-            } else {
-                logger.warn('Could not extract duration - no tools available', { filePath });
-                resolve(null);
-            }
+          }
+
+          logger.warn('Could not extract duration from audio file', { filePath });
+          resolve(null);
         });
+      } else {
+        logger.warn('Could not extract duration - no tools available', { filePath });
+        resolve(null);
+      }
     });
+  });
 }
 
 // --- Download Management ---
 
 // Fetches metadata for a URL (playlist or single video) without downloading.
 async function fetchPlaylistInfo(url) {
-    logger.info('Fetching playlist info...', { url });
-    const appConfig = await loadAppConfig();
+  logger.info('Fetching playlist info...', { url });
+  const appConfig = await loadAppConfig();
 
-    return new Promise((resolve, reject) => {
-        const ytDlpExecutablePath = ytDlpHelper.getYtDlpPath();
-        if (!ytDlpExecutablePath || !ytDlpHelper.isYtDlpReady()) {
-            const errorMsg = 'yt-dlp is not available or not ready.';
-            logger.error(errorMsg);
-            return reject(new Error(errorMsg));
+  return new Promise((resolve, reject) => {
+    const ytDlpExecutablePath = ytDlpHelper.getYtDlpPath();
+    if (!ytDlpExecutablePath || !ytDlpHelper.isYtDlpReady()) {
+      const errorMsg = 'yt-dlp is not available or not ready.';
+      logger.error(errorMsg);
+      return reject(new Error(errorMsg));
+    }
+
+    const baseArgs = [
+      '--dump-single-json',
+      '--flat-playlist',
+      '--no-warnings',
+      url
+    ];
+
+    // Try without cookies first - only use cookies if initial fetch fails
+    let args = getYtDlpArgs(baseArgs, appConfig);
+    logger.debug('Executing yt-dlp for playlist entries', { command: `${ytDlpExecutablePath} ${args.join(' ')}` });
+
+    const child = spawn(ytDlpExecutablePath, args);
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (data) => stdout += data.toString());
+    child.stderr.on('data', (data) => stderr += data.toString());
+
+    child.on('close', async (code) => {
+      if (code === 0) {
+        try {
+          logger.debug('yt-dlp metadata output', { rawJson: stdout });
+          const info = JSON.parse(stdout);
+          const entries = info.entries || [info];
+          logger.info(`Successfully fetched info for ${entries.length} tracks.`, { url });
+          resolve(entries);
+        } catch (e) {
+          const errorMsg = 'Failed to parse yt-dlp JSON output.';
+          logger.error(errorMsg, e, { rawJson: stdout });
+          reject(new Error(errorMsg));
+        }
+      } else {
+        // Check if this is an age restriction error that might be solved with cookies
+        const isAgeRestricted = stderr && (
+          stderr.includes('Sign in to confirm your age') ||
+          stderr.includes('age-restricted') ||
+          stderr.includes('inappropriate for some users')
+        );
+
+        if (isAgeRestricted) {
+          logger.info('Initial fetch failed due to age restrictions, trying with cookies...', { url });
+
+          // Try again with cookies if available
+          const dataPath = app.getPath('userData');
+          const cookiesPath = path.join(dataPath, 'cookies.txt');
+
+          try {
+            if (fs.pathExistsSync(cookiesPath)) {
+              let isYouTubeCookie = false;
+              try {
+                const cookieContent = fs.readFileSync(cookiesPath, 'utf8');
+                isYouTubeCookie = /\byoutube\.com\b/i.test(cookieContent) || /\bSID\b|\bSAPISID\b|\b__Secure-3PAPISID\b/i.test(cookieContent);
+              } catch (readErr) {
+                logger.warn('Failed to read cookies.txt to validate contents', readErr);
+              }
+
+              if (isYouTubeCookie) {
+                logger.info('Retrying with cookies.txt for age-restricted content', { cookiesPath });
+                const cookieArgs = ['--cookies', cookiesPath, ...args];
+
+                // Retry with cookies
+                const retryChild = spawn(ytDlpExecutablePath, cookieArgs);
+                let retryStdout = '';
+                let retryStderr = '';
+                retryChild.stdout.on('data', (data) => retryStdout += data.toString());
+                retryChild.stderr.on('data', (data) => retryStderr += data.toString());
+
+                retryChild.on('close', (retryCode) => {
+                  if (retryCode === 0) {
+                    try {
+                      const retryInfo = JSON.parse(retryStdout);
+                      const retryEntries = retryInfo.entries || [retryInfo];
+                      logger.info(`Successfully fetched age-restricted content with cookies: ${retryEntries.length} tracks.`, { url });
+                      resolve(retryEntries);
+                    } catch (e) {
+                      const errorMsg = 'Failed to parse yt-dlp JSON output from cookie retry.';
+                      logger.error(errorMsg, e, { rawJson: retryStdout });
+                      reject(new Error(errorMsg));
+                    }
+                  } else {
+                    const errorMsg = `yt-dlp failed to fetch playlist info even with cookies. Code: ${retryCode}.`;
+                    logger.error(errorMsg, null, { stderr: retryStderr, url });
+                    reject(new Error(`${errorMsg} Error: ${retryStderr}`));
+                  }
+                });
+
+                retryChild.on('error', (err) => {
+                  const errorMsg = 'Failed to start yt-dlp retry process with cookies.';
+                  logger.error(errorMsg, err);
+                  reject(new Error(errorMsg));
+                });
+
+                return; // Exit early, retry is handling the response
+              } else {
+                logger.warn('cookies.txt found but does NOT appear to contain YouTube cookies', { cookiesPath });
+              }
+            } else {
+              logger.info('No cookies.txt available for age-restricted content', { cookiesPath });
+            }
+          } catch (cookieCheckErr) {
+            logger.warn('Failed to check cookies.txt for age-restricted retry', cookieCheckErr);
+          }
         }
 
-        const baseArgs = [
-            '--dump-single-json',
-            '--flat-playlist',
-            '--no-warnings',
-            url
-        ];
-
-        // Try without cookies first - only use cookies if initial fetch fails
-        let args = getYtDlpArgs(baseArgs, appConfig);
-        logger.debug('Executing yt-dlp for playlist entries', { command: `${ytDlpExecutablePath} ${args.join(' ')}` });
-
-        const child = spawn(ytDlpExecutablePath, args);
-        let stdout = '';
-        let stderr = '';
-        child.stdout.on('data', (data) => stdout += data.toString());
-        child.stderr.on('data', (data) => stderr += data.toString());
-
-        child.on('close', async (code) => {
-            if (code === 0) {
-                try {
-                    logger.debug('yt-dlp metadata output', { rawJson: stdout });
-                    const info = JSON.parse(stdout);
-                    const entries = info.entries || [info];
-                    logger.info(`Successfully fetched info for ${entries.length} tracks.`, { url });
-                    resolve(entries);
-                } catch (e) {
-                    const errorMsg = 'Failed to parse yt-dlp JSON output.';
-                    logger.error(errorMsg, e, { rawJson: stdout });
-                    reject(new Error(errorMsg));
-                }
-            } else {
-                // Check if this is an age restriction error that might be solved with cookies
-                const isAgeRestricted = stderr && (
-                    stderr.includes('Sign in to confirm your age') ||
-                    stderr.includes('age-restricted') ||
-                    stderr.includes('inappropriate for some users')
-                );
-                
-                if (isAgeRestricted) {
-                    logger.info('Initial fetch failed due to age restrictions, trying with cookies...', { url });
-                    
-                    // Try again with cookies if available
-                    const dataPath = app.getPath('userData');
-                    const cookiesPath = path.join(dataPath, 'cookies.txt');
-                    
-                    try {
-                        if (fs.pathExistsSync(cookiesPath)) {
-                            let isYouTubeCookie = false;
-                            try {
-                                const cookieContent = fs.readFileSync(cookiesPath, 'utf8');
-                                isYouTubeCookie = /\byoutube\.com\b/i.test(cookieContent) || /\bSID\b|\bSAPISID\b|\b__Secure-3PAPISID\b/i.test(cookieContent);
-                            } catch (readErr) {
-                                logger.warn('Failed to read cookies.txt to validate contents', readErr);
-                            }
-                            
-                            if (isYouTubeCookie) {
-                                logger.info('Retrying with cookies.txt for age-restricted content', { cookiesPath });
-                                const cookieArgs = ['--cookies', cookiesPath, ...args];
-                                
-                                // Retry with cookies
-                                const retryChild = spawn(ytDlpExecutablePath, cookieArgs);
-                                let retryStdout = '';
-                                let retryStderr = '';
-                                retryChild.stdout.on('data', (data) => retryStdout += data.toString());
-                                retryChild.stderr.on('data', (data) => retryStderr += data.toString());
-                                
-                                retryChild.on('close', (retryCode) => {
-                                    if (retryCode === 0) {
-                                        try {
-                                            const retryInfo = JSON.parse(retryStdout);
-                                            const retryEntries = retryInfo.entries || [retryInfo];
-                                            logger.info(`Successfully fetched age-restricted content with cookies: ${retryEntries.length} tracks.`, { url });
-                                            resolve(retryEntries);
-                                        } catch (e) {
-                                            const errorMsg = 'Failed to parse yt-dlp JSON output from cookie retry.';
-                                            logger.error(errorMsg, e, { rawJson: retryStdout });
-                                            reject(new Error(errorMsg));
-                                        }
-                                    } else {
-                                        const errorMsg = `yt-dlp failed to fetch playlist info even with cookies. Code: ${retryCode}.`;
-                                        logger.error(errorMsg, null, { stderr: retryStderr, url });
-                                        reject(new Error(`${errorMsg} Error: ${retryStderr}`));
-                                    }
-                                });
-                                
-                                retryChild.on('error', (err) => {
-                                    const errorMsg = 'Failed to start yt-dlp retry process with cookies.';
-                                    logger.error(errorMsg, err);
-                                    reject(new Error(errorMsg));
-                                });
-                                
-                                return; // Exit early, retry is handling the response
-                            } else {
-                                logger.warn('cookies.txt found but does NOT appear to contain YouTube cookies', { cookiesPath });
-                            }
-                        } else {
-                            logger.info('No cookies.txt available for age-restricted content', { cookiesPath });
-                        }
-                    } catch (cookieCheckErr) {
-                        logger.warn('Failed to check cookies.txt for age-restricted retry', cookieCheckErr);
-                    }
-                }
-                
-                // If we get here, either it's not age-restricted or cookies didn't help
-                const errorMsg = `yt-dlp failed to fetch playlist info. Code: ${code}.`;
-                logger.error(errorMsg, null, { stderr, url });
-                reject(new Error(`${errorMsg} Error: ${stderr}`));
-            }
-        });
-
-        child.on('error', (err) => {
-            const errorMsg = 'Failed to start yt-dlp process.';
-            logger.error(errorMsg, err);
-            reject(new Error(errorMsg));
-        });
+        // If we get here, either it's not age-restricted or cookies didn't help
+        const errorMsg = `yt-dlp failed to fetch playlist info. Code: ${code}.`;
+        logger.error(errorMsg, null, { stderr, url });
+        reject(new Error(`${errorMsg} Error: ${stderr}`));
+      }
     });
+
+    child.on('error', (err) => {
+      const errorMsg = 'Failed to start yt-dlp process.';
+      logger.error(errorMsg, err);
+      reject(new Error(errorMsg));
+    });
+  });
 }
 
 withErrorHandling('download-from-url', async (event, { url, playlistId }) => {
-    if (isDownloading) {
-        logger.warn('Download already in progress.');
-        mainWindow.webContents.send('download-error', { 
-            error: 'Download already in progress.' 
-        });
-        return { success: false, message: 'Download already in progress.' };
+  if (isDownloading) {
+    logger.warn('Download already in progress.');
+    mainWindow.webContents.send('download-error', {
+      error: 'Download already in progress.'
+    });
+    return { success: false, message: 'Download already in progress.' };
+  }
+
+  isDownloading = true;
+  mainWindow.webContents.send('download-started');
+  logger.info(`Download request received for playlist: ${playlistId}`, { url });
+
+  try {
+    // Wait for background initialization to complete if still running
+    if (global.backgroundInitPromise) {
+      logger.info('Waiting for background initialization to complete...');
+      await global.backgroundInitPromise;
     }
 
-    isDownloading = true;
-    mainWindow.webContents.send('download-started');
-    logger.info(`Download request received for playlist: ${playlistId}`, { url });
+    const playlistPath = path.join(playlistsPath, `${playlistId}.json`);
+    const playlist = await fs.readJson(playlistPath);
 
-    try {
-        // Wait for background initialization to complete if still running
-        if (global.backgroundInitPromise) {
-            logger.info('Waiting for background initialization to complete...');
-            await global.backgroundInitPromise;
-        }
-        
-        const playlistPath = path.join(playlistsPath, `${playlistId}.json`);
-        const playlist = await fs.readJson(playlistPath);
-        
-        // Send initial progress update
-        mainWindow.webContents.send('download-progress', {
-            taskId: 'fetching-info',
-            progress: 0,
-            trackInfo: { title: 'Fetching track information...' }
-        });
-        
-        const trackInfos = await fetchPlaylistInfo(url);
-        logger.info(`Found ${trackInfos.length} tracks to download.`, { url });
+    // Send initial progress update
+    mainWindow.webContents.send('download-progress', {
+      taskId: 'fetching-info',
+      progress: 0,
+      trackInfo: { title: 'Fetching track information...' }
+    });
 
-        let downloadedTracks = [];
-        let failedTracks = [];
-        let ageRestrictedTracks = [];
-        let skippedTracks = [];
-        let tasks = [];
+    const trackInfos = await fetchPlaylistInfo(url);
+    logger.info(`Found ${trackInfos.length} tracks to download.`, { url });
 
-        for (const trackInfo of trackInfos) {
-            const trackUrl = trackInfo.webpage_url || trackInfo.url;
-            if (playlist.tracks.some(t => t && t.url === trackUrl)) {
-                logger.info('Skipping duplicate track', { title: trackInfo.title });
-                skippedTracks.push(trackInfo);
-                continue;
-            }
+    let downloadedTracks = [];
+    let failedTracks = [];
+    let ageRestrictedTracks = [];
+    let skippedTracks = [];
+    let tasks = [];
 
-            tasks.push({
-                type: 'downloadTrack',
-                trackInfo,
-                songsPath,
-                taskId: `${playlistId}-${trackInfo.id}`
+    for (const trackInfo of trackInfos) {
+      const trackUrl = trackInfo.webpage_url || trackInfo.url;
+      if (playlist.tracks.some(t => t && t.url === trackUrl)) {
+        logger.info('Skipping duplicate track', { title: trackInfo.title });
+        skippedTracks.push(trackInfo);
+        continue;
+      }
+
+      tasks.push({
+        type: 'downloadTrack',
+        trackInfo,
+        songsPath,
+        taskId: `${playlistId}-${trackInfo.id}`
+      });
+    }
+
+    // Send progress update with track count
+    mainWindow.webContents.send('download-progress', {
+      taskId: 'preparing-downloads',
+      progress: 0,
+      trackInfo: {
+        title: `Preparing to download ${tasks.length} track${tasks.length !== 1 ? 's' : ''}...`,
+        totalTracks: tasks.length,
+        skippedTracks: skippedTracks.length
+      }
+    });
+
+    // Initialize worker pool if not already done
+    await initializeWorkerPool();
+
+
+
+    // Use the process worker pool to download tracks in parallel
+    // Progress monitoring setup (timeout removed for slow connections)
+    const progressListener = (data) => {
+      if (data && data.progress !== undefined) {
+        logger.info('Download progress update received');
+      }
+    };
+    processWorkerPool.on('progress', progressListener);
+
+    const workerStats = processWorkerPool.getStats();
+    logger.info(`Starting parallel download of ${tasks.length} tracks using ${workerStats.totalWorkers} workers`);
+
+    let completedTasks = 0;
+    const totalTasks = tasks.length;
+
+    // Create array to preserve original order
+    const downloadResults = new Array(tasks.length);
+
+    const downloadPromises = tasks.map((task, index) => {
+      return processWorkerPool.addTask(task.trackInfo, songsPath, playlistId)
+        .then(result => {
+          completedTasks++;
+          const overallProgress = Math.round((completedTasks / totalTasks) * 100);
+
+          if (result.success) {
+            // Store result at original index to preserve order
+            downloadResults[index] = result.track;
+            logger.info(`Downloaded: ${result.track.name}`);
+
+            // Send overall progress update
+            mainWindow.webContents.send('download-progress', {
+              taskId: 'overall-progress',
+              progress: overallProgress,
+              trackInfo: {
+                title: `Downloaded "${result.track.name}"`,
+                completed: completedTasks,
+                total: totalTasks,
+                successful: downloadResults.filter(Boolean).length,
+                failed: failedTracks.length
+              }
             });
-        }
 
-        // Send progress update with track count
-        mainWindow.webContents.send('download-progress', {
-            taskId: 'preparing-downloads',
-            progress: 0,
-            trackInfo: { 
-                title: `Preparing to download ${tasks.length} track${tasks.length !== 1 ? 's' : ''}...`,
-                totalTracks: tasks.length,
-                skippedTracks: skippedTracks.length
-            }
-        });
+            // Send the newly downloaded track to the renderer for immediate UI update
+            mainWindow.webContents.send('track-downloaded', {
+              playlistId,
+              track: result.track
+            });
+          } else {
+            failedTracks.push(result.trackInfo);
+            logger.warn(`Failed to download: ${result.trackInfo.title}`, { error: result.error });
 
-        // Initialize worker pool if not already done
-        await initializeWorkerPool();
-        
-    
-        
-        // Use the process worker pool to download tracks in parallel
-        // Progress monitoring setup (timeout removed for slow connections)
-        const progressListener = (data) => {
-            if (data && data.progress !== undefined) {
-                logger.info('Download progress update received');
-            }
-        };
-        processWorkerPool.on('progress', progressListener);
-
-        const workerStats = processWorkerPool.getStats();
-        logger.info(`Starting parallel download of ${tasks.length} tracks using ${workerStats.totalWorkers} workers`);
-        
-        let completedTasks = 0;
-        const totalTasks = tasks.length;
-        
-        // Create array to preserve original order
-        const downloadResults = new Array(tasks.length);
-        
-        const downloadPromises = tasks.map((task, index) => {
-            return processWorkerPool.addTask(task.trackInfo, songsPath, playlistId)
-                .then(result => {
-                    completedTasks++;
-                    const overallProgress = Math.round((completedTasks / totalTasks) * 100);
-                    
-                    if (result.success) {
-                        // Store result at original index to preserve order
-                        downloadResults[index] = result.track;
-                        logger.info(`Downloaded: ${result.track.name}`);
-                        
-                        // Send overall progress update
-                        mainWindow.webContents.send('download-progress', {
-                            taskId: 'overall-progress',
-                            progress: overallProgress,
-                            trackInfo: {
-                                title: `Downloaded "${result.track.name}"`,
-                                completed: completedTasks,
-                                total: totalTasks,
-                                successful: downloadResults.filter(Boolean).length,
-                                failed: failedTracks.length
-                            }
-                        });
-                        
-                        // Send the newly downloaded track to the renderer for immediate UI update
-                        mainWindow.webContents.send('track-downloaded', {
-                            playlistId,
-                            track: result.track
-                        });
-                    } else {
-                        failedTracks.push(result.trackInfo);
-                        logger.warn(`Failed to download: ${result.trackInfo.title}`, { error: result.error });
-                        
-                        // Send progress update for failed track
-                        mainWindow.webContents.send('download-progress', {
-                            taskId: 'overall-progress',
-                            progress: overallProgress,
-                            trackInfo: {
-                                title: `Failed to download "${result.trackInfo.title}"`,
-                                completed: completedTasks,
-                                total: totalTasks,
-                                successful: downloadedTracks.length,
-                                failed: failedTracks.length
-                            }
-                        });
-                    }
-                    return result;
-                })
-                .catch(error => {
-                    completedTasks++;
-                    const overallProgress = Math.round((completedTasks / totalTasks) * 100);
-                    
-                    logger.error(`Download promise rejected:`, error);
-                    
-                    // Categorize the error
-                    const isAgeRestricted = error.message && (
-                        error.message.includes('AGE_RESTRICTED') ||
-                        error.message.includes('Sign in to confirm your age') ||
-                        error.message.includes('age-restricted')
-                    );
-                    
-                    const shouldSkip = error.message && error.message.includes('AGE_RESTRICTED_SKIP');
-                    
-                    if (shouldSkip || isAgeRestricted) {
-                        ageRestrictedTracks.push(task.trackInfo);
-                        // Log as skipped rather than failed for better UX
-                        logger.info(`Skipping age-restricted track: ${task.trackInfo.title}`);
-                    } else {
-                        failedTracks.push(task.trackInfo);
-                    }
-                    
-                    // Send progress update for error
-                    mainWindow.webContents.send('download-progress', {
-                        taskId: 'overall-progress',
-                        progress: overallProgress,
-                        trackInfo: {
-                            title: (shouldSkip || isAgeRestricted) ? `Skipping age-restricted: "${task.trackInfo.title}"` : `Error downloading "${task.trackInfo.title}"`,
-                            completed: completedTasks,
-                            total: totalTasks,
-                            successful: downloadedTracks.length,
-                            failed: failedTracks.length,
-                            ageRestricted: ageRestrictedTracks.length
-                        }
-                    });
-                    
-                    return { success: false, trackInfo: task.trackInfo, error: error.message, isAgeRestricted };
-                });
-        });
-
-        // Wait for all downloads to complete
-        const results = await Promise.all(downloadPromises);
-
-        // Clean up progress listener
-        processWorkerPool.off('progress', progressListener);
-        
-        // Log worker pool statistics
-        // Filter out null/undefined results and preserve order
-        const orderedDownloadedTracks = downloadResults.filter(Boolean);
-        
-        const stats = processWorkerPool.getStats();
-        logger.info('Download batch completed', {
-            totalTasks: tasks.length,
-            successful: orderedDownloadedTracks.length,
-            failed: failedTracks.length,
-            workerStats: stats
-        });
-
-        if (orderedDownloadedTracks.length > 0) {
-            // Acquire lock before writing to playlist file
-            if (fileLock.acquire(playlistPath)) {
-                try {
-                    playlist.tracks.push(...orderedDownloadedTracks);
-                    await fs.writeJson(playlistPath, playlist);
-                } finally {
-        	// Ensure cleanup for progress listener
-        	if (processWorkerPool && processWorkerPool.off) processWorkerPool.off('progress', progressListener);
-                    fileLock.release(playlistPath);
-                }
-            } else {
-                logger.error('Failed to acquire lock for playlist update', { playlistId });
-                return { success: false, message: 'Failed to update playlist due to file lock.' };
-            }
-            
-            // Run duration scan for newly downloaded tracks
-            logger.info('Running duration scan for newly downloaded tracks');
-            try {
-                const durationResult = await scanAndUpdateTrackDurations();
-                if (durationResult.updated > 0) {
-                    logger.info(`Duration scan after download completed: ${durationResult.updated} tracks updated`);
-                    // Notify UI about duration updates
-                    mainWindow.webContents.send('duration-scan-complete', durationResult);
-                }
-            } catch (error) {
-                logger.error('Error during post-download duration scan', error);
-            }
-        }
-
-        const summary = {
-            downloaded: orderedDownloadedTracks.length,
-            failed: failedTracks.length,
-            ageRestricted: ageRestrictedTracks.length,
-            skipped: skippedTracks.length
-        };
-        logger.info('Download summary', { ...summary, url });
-
-        // Send final progress update
-        const summaryMessage = [];
-        if (summary.downloaded > 0) summaryMessage.push(`${summary.downloaded} downloaded`);
-        if (summary.failed > 0) summaryMessage.push(`${summary.failed} failed`);
-        if (summary.ageRestricted > 0) summaryMessage.push(`${summary.ageRestricted} age-restricted`);
-        if (summary.skipped > 0) summaryMessage.push(`${summary.skipped} skipped`);
-        
-        mainWindow.webContents.send('download-progress', {
-            taskId: 'completion',
-            progress: 100,
-            trackInfo: {
-                title: `Download complete! ${summaryMessage.join(', ')}`,
-                completed: totalTasks,
+            // Send progress update for failed track
+            mainWindow.webContents.send('download-progress', {
+              taskId: 'overall-progress',
+              progress: overallProgress,
+              trackInfo: {
+                title: `Failed to download "${result.trackInfo.title}"`,
+                completed: completedTasks,
                 total: totalTasks,
                 successful: downloadedTracks.length,
                 failed: failedTracks.length
-            }
-        });
-
-        mainWindow.webContents.send('download-complete', {
-            playlistId,
-            downloadedTracks: orderedDownloadedTracks,
-            failedTracks,
-            ageRestrictedTracks,
-            skippedTracks
-        });
-        
-        // Show comprehensive completion notice for failed/skipped tracks
-        const totalProblematic = failedTracks.length + ageRestrictedTracks.length;
-        if (totalProblematic > 0) {
-            let notificationTitle = 'Download Issues';
-            let notificationMessage = '';
-            
-            if (ageRestrictedTracks.length > 0 && failedTracks.length > 0) {
-                notificationTitle = 'Some Tracks Skipped';
-                notificationMessage = `${ageRestrictedTracks.length} track${ageRestrictedTracks.length > 1 ? 's were' : ' was'} skipped due to age restrictions and ${failedTracks.length} track${failedTracks.length > 1 ? 's' : ''} failed due to other issues (private, removed, or unavailable).\n\nFor age-restricted content: Go to Settings → YouTube Cookies to upload a valid cookies.txt file.`;
-            } else if (ageRestrictedTracks.length > 0) {
-                notificationTitle = 'Age-Restricted Content Skipped';
-                notificationMessage = `${ageRestrictedTracks.length} track${ageRestrictedTracks.length > 1 ? 's were' : ' was'} skipped due to age restrictions.\n\nTo download age-restricted content: Go to Settings → YouTube Cookies and upload a valid cookies.txt file from your browser.`;
-            } else if (failedTracks.length > 0) {
-                notificationTitle = 'Some Tracks Failed';
-                notificationMessage = `${failedTracks.length} track${failedTracks.length > 1 ? 's' : ''} could not be downloaded. These may be private, removed, or age restricted videos. For age restriction go to settings and add cookies.txt`;
-            }
-            
-            if (mainWindow && mainWindow.webContents) {
-                mainWindow.webContents.send('show-download-completion-notice', {
-                    title: notificationTitle,
-                    message: notificationMessage,
-                    ageRestrictedCount: ageRestrictedTracks.length,
-                    failedCount: failedTracks.length,
-                    ageRestrictedTracks: ageRestrictedTracks.map(t => t.title),
-                    failedTracks: failedTracks.map(t => t.title)
-                });
-            }
-        }
-
-        return { success: true, summary };
-    } catch (error) {
-        // Enhanced error logging with more details
-        const errorDetails = {
-            url,
-            playlistId,
-            errorName: error.name,
-            errorMessage: error.message,
-            errorStack: error.stack,
-            timestamp: new Date().toISOString(),
-            workerPoolActive: processWorkerPool ? true : false
-        };
-        
-        logger.error('Download process failed with detailed error information', error, errorDetails);
-        
-        // Check for various error types and provide user-friendly messages
-        const isAgeRestricted = error.message && (
-            error.message.includes('Sign in to confirm your age') ||
-            error.message.includes('age-restricted') ||
-            error.message.includes('inappropriate for some users')
-        );
-        
-        const isCookieFormatError = error.message && (
-            error.message.includes('Netscape format') ||
-            error.message.includes('does not look like a Netscape format cookies file')
-        );
-        
-        const isCookieError = error.message && (
-            error.message.includes('cookies.txt') ||
-            error.message.includes('--cookies')
-        );
-        
-        let userMessage = error.message;
-        
-        if (isCookieFormatError) {
-            userMessage = 'Invalid cookies.txt format. Please export cookies in Netscape format from your browser. Go to Settings → YouTube Cookies for instructions.';
-        } else if (isAgeRestricted || isCookieError) {
-            // Check if this is a single track or playlist (if trackInfos is available)
-            let isSingleTrack = false;
-            try {
-                isSingleTrack = trackInfos && trackInfos.length === 1;
-            } catch {
-                // trackInfos not available, assume single track
-                isSingleTrack = true;
-            }
-            if (isSingleTrack) {
-                userMessage = 'This video is age-restricted and requires valid YouTube cookies. Please upload a properly formatted cookies.txt file from Settings → YouTube Cookies.';
-            } else {
-                userMessage = 'Some videos in this playlist are age-restricted and require valid YouTube cookies. Please upload a properly formatted cookies.txt file from Settings → YouTube Cookies.';
-            }
-        } else {
-            // For any other YouTube download failure, assume it's likely age-restricted
-            let isSingleTrack = false;
-            try {
-                isSingleTrack = trackInfos && trackInfos.length === 1;
-            } catch {
-                // trackInfos not available, assume single track
-                isSingleTrack = true;
-            }
-            if (isSingleTrack) {
-                userMessage = 'Failed to download this video. This is likely due to age restrictions. Please upload a valid cookies.txt file from Settings → YouTube Cookies to access age-restricted content.';
-            } else {
-                userMessage = 'Failed to download some videos. This is likely due to age restrictions. Please upload a valid cookies.txt file from Settings → YouTube Cookies to access all content.';
-            }
-        }
-        
-        // Send detailed error to renderer for better user feedback
-        if (mainWindow && mainWindow.webContents) {
-            mainWindow.webContents.send('download-error', { 
-                error: userMessage,
-                details: errorDetails,
-                isAgeRestricted 
+              }
             });
+          }
+          return result;
+        })
+        .catch(error => {
+          completedTasks++;
+          const overallProgress = Math.round((completedTasks / totalTasks) * 100);
+
+          logger.error(`Download promise rejected:`, error);
+
+          // Categorize the error
+          const isAgeRestricted = error.message && (
+            error.message.includes('AGE_RESTRICTED') ||
+            error.message.includes('Sign in to confirm your age') ||
+            error.message.includes('age-restricted')
+          );
+
+          const shouldSkip = error.message && error.message.includes('AGE_RESTRICTED_SKIP');
+
+          if (shouldSkip || isAgeRestricted) {
+            ageRestrictedTracks.push(task.trackInfo);
+            // Log as skipped rather than failed for better UX
+            logger.info(`Skipping age-restricted track: ${task.trackInfo.title}`);
+          } else {
+            failedTracks.push(task.trackInfo);
+          }
+
+          // Send progress update for error
+          mainWindow.webContents.send('download-progress', {
+            taskId: 'overall-progress',
+            progress: overallProgress,
+            trackInfo: {
+              title: (shouldSkip || isAgeRestricted) ? `Skipping age-restricted: "${task.trackInfo.title}"` : `Error downloading "${task.trackInfo.title}"`,
+              completed: completedTasks,
+              total: totalTasks,
+              successful: downloadedTracks.length,
+              failed: failedTracks.length,
+              ageRestricted: ageRestrictedTracks.length
+            }
+          });
+
+          return { success: false, trackInfo: task.trackInfo, error: error.message, isAgeRestricted };
+        });
+    });
+
+    // Wait for all downloads to complete
+    const results = await Promise.all(downloadPromises);
+
+    // Clean up progress listener
+    processWorkerPool.off('progress', progressListener);
+
+    // Log worker pool statistics
+    // Filter out null/undefined results and preserve order
+    const orderedDownloadedTracks = downloadResults.filter(Boolean);
+
+    const stats = processWorkerPool.getStats();
+    logger.info('Download batch completed', {
+      totalTasks: tasks.length,
+      successful: orderedDownloadedTracks.length,
+      failed: failedTracks.length,
+      workerStats: stats
+    });
+
+    if (orderedDownloadedTracks.length > 0) {
+      // Acquire lock before writing to playlist file
+      if (fileLock.acquire(playlistPath)) {
+        try {
+          playlist.tracks.push(...orderedDownloadedTracks);
+          await fs.writeJson(playlistPath, playlist);
+        } finally {
+          // Ensure cleanup for progress listener
+          if (processWorkerPool && processWorkerPool.off) processWorkerPool.off('progress', progressListener);
+          fileLock.release(playlistPath);
         }
-        
-        return { success: false, message: userMessage };
-    } finally {
-        isDownloading = false;
-        if (mainWindow && mainWindow.webContents) {
-            mainWindow.webContents.send('download-finished');
+      } else {
+        logger.error('Failed to acquire lock for playlist update', { playlistId });
+        return { success: false, message: 'Failed to update playlist due to file lock.' };
+      }
+
+      // Run duration scan for newly downloaded tracks
+      logger.info('Running duration scan for newly downloaded tracks');
+      try {
+        const durationResult = await scanAndUpdateTrackDurations();
+        if (durationResult.updated > 0) {
+          logger.info(`Duration scan after download completed: ${durationResult.updated} tracks updated`);
+          // Notify UI about duration updates
+          mainWindow.webContents.send('duration-scan-complete', durationResult);
         }
-        logger.info('Download process finished.', { url });
+      } catch (error) {
+        logger.error('Error during post-download duration scan', error);
+      }
     }
+
+    const summary = {
+      downloaded: orderedDownloadedTracks.length,
+      failed: failedTracks.length,
+      ageRestricted: ageRestrictedTracks.length,
+      skipped: skippedTracks.length
+    };
+    logger.info('Download summary', { ...summary, url });
+
+    // Send final progress update
+    const summaryMessage = [];
+    if (summary.downloaded > 0) summaryMessage.push(`${summary.downloaded} downloaded`);
+    if (summary.failed > 0) summaryMessage.push(`${summary.failed} failed`);
+    if (summary.ageRestricted > 0) summaryMessage.push(`${summary.ageRestricted} age-restricted`);
+    if (summary.skipped > 0) summaryMessage.push(`${summary.skipped} skipped`);
+
+    mainWindow.webContents.send('download-progress', {
+      taskId: 'completion',
+      progress: 100,
+      trackInfo: {
+        title: `Download complete! ${summaryMessage.join(', ')}`,
+        completed: totalTasks,
+        total: totalTasks,
+        successful: downloadedTracks.length,
+        failed: failedTracks.length
+      }
+    });
+
+    mainWindow.webContents.send('download-complete', {
+      playlistId,
+      downloadedTracks: orderedDownloadedTracks,
+      failedTracks,
+      ageRestrictedTracks,
+      skippedTracks
+    });
+
+    // Show comprehensive completion notice for failed/skipped tracks
+    const totalProblematic = failedTracks.length + ageRestrictedTracks.length;
+    if (totalProblematic > 0) {
+      let notificationTitle = 'Download Issues';
+      let notificationMessage = '';
+
+      if (ageRestrictedTracks.length > 0 && failedTracks.length > 0) {
+        notificationTitle = 'Some Tracks Skipped';
+        notificationMessage = `${ageRestrictedTracks.length} track${ageRestrictedTracks.length > 1 ? 's were' : ' was'} skipped due to age restrictions and ${failedTracks.length} track${failedTracks.length > 1 ? 's' : ''} failed due to other issues (private, removed, or unavailable).\n\nFor age-restricted content: Go to Settings → YouTube Cookies to upload a valid cookies.txt file.`;
+      } else if (ageRestrictedTracks.length > 0) {
+        notificationTitle = 'Age-Restricted Content Skipped';
+        notificationMessage = `${ageRestrictedTracks.length} track${ageRestrictedTracks.length > 1 ? 's were' : ' was'} skipped due to age restrictions.\n\nTo download age-restricted content: Go to Settings → YouTube Cookies and upload a valid cookies.txt file from your browser.`;
+      } else if (failedTracks.length > 0) {
+        notificationTitle = 'Some Tracks Failed';
+        notificationMessage = `${failedTracks.length} track${failedTracks.length > 1 ? 's' : ''} could not be downloaded. These may be private, removed, or age restricted videos. For age restriction go to settings and add cookies.txt`;
+      }
+
+      if (mainWindow && mainWindow.webContents) {
+        mainWindow.webContents.send('show-download-completion-notice', {
+          title: notificationTitle,
+          message: notificationMessage,
+          ageRestrictedCount: ageRestrictedTracks.length,
+          failedCount: failedTracks.length,
+          ageRestrictedTracks: ageRestrictedTracks.map(t => t.title),
+          failedTracks: failedTracks.map(t => t.title)
+        });
+      }
+    }
+
+    return { success: true, summary };
+  } catch (error) {
+    // Enhanced error logging with more details
+    const errorDetails = {
+      url,
+      playlistId,
+      errorName: error.name,
+      errorMessage: error.message,
+      errorStack: error.stack,
+      timestamp: new Date().toISOString(),
+      workerPoolActive: processWorkerPool ? true : false
+    };
+
+    logger.error('Download process failed with detailed error information', error, errorDetails);
+
+    // Check for various error types and provide user-friendly messages
+    const isAgeRestricted = error.message && (
+      error.message.includes('Sign in to confirm your age') ||
+      error.message.includes('age-restricted') ||
+      error.message.includes('inappropriate for some users')
+    );
+
+    const isCookieFormatError = error.message && (
+      error.message.includes('Netscape format') ||
+      error.message.includes('does not look like a Netscape format cookies file')
+    );
+
+    const isCookieError = error.message && (
+      error.message.includes('cookies.txt') ||
+      error.message.includes('--cookies')
+    );
+
+    let userMessage = error.message;
+
+    if (isCookieFormatError) {
+      userMessage = 'Invalid cookies.txt format. Please export cookies in Netscape format from your browser. Go to Settings → YouTube Cookies for instructions.';
+    } else if (isAgeRestricted || isCookieError) {
+      // Check if this is a single track or playlist (if trackInfos is available)
+      let isSingleTrack = false;
+      try {
+        isSingleTrack = trackInfos && trackInfos.length === 1;
+      } catch (err) {
+        // trackInfos not available, assume single track
+        logger.debug('Could not determine if single track, assuming true for error message', { error: err ? err.message : 'Unknown' });
+        isSingleTrack = true;
+      }
+      if (isSingleTrack) {
+        userMessage = 'This video is age-restricted and requires valid YouTube cookies. Please upload a properly formatted cookies.txt file from Settings → YouTube Cookies.';
+      } else {
+        userMessage = 'Some videos in this playlist are age-restricted and require valid YouTube cookies. Please upload a properly formatted cookies.txt file from Settings → YouTube Cookies.';
+      }
+    } else {
+      // For any other YouTube download failure, assume it's likely age-restricted
+      let isSingleTrack = false;
+      try {
+        isSingleTrack = trackInfos && trackInfos.length === 1;
+      } catch (err) {
+        // trackInfos not available, assume single track
+        logger.debug('Could not determine if single track, assuming true for error message', { error: err ? err.message : 'Unknown' });
+        isSingleTrack = true;
+      }
+      if (isSingleTrack) {
+        userMessage = 'Failed to download this video. This is likely due to age restrictions. Please upload a valid cookies.txt file from Settings → YouTube Cookies to access age-restricted content.';
+      } else {
+        userMessage = 'Failed to download some videos. This is likely due to age restrictions. Please upload a valid cookies.txt file from Settings → YouTube Cookies to access all content.';
+      }
+    }
+
+    // Send detailed error to renderer for better user feedback
+    if (mainWindow && mainWindow.webContents) {
+      mainWindow.webContents.send('download-error', {
+        error: userMessage,
+        details: errorDetails,
+        isAgeRestricted
+      });
+    }
+
+    return { success: false, message: userMessage };
+  } finally {
+    isDownloading = false;
+    if (mainWindow && mainWindow.webContents) {
+      mainWindow.webContents.send('download-finished');
+    }
+    logger.info('Download process finished.', { url });
+  }
 });
 
 // IPC handlers for file operations
@@ -1424,7 +1423,7 @@ withErrorHandling('add-local-file', async (event, { filePath, playlistId }) => {
     if (!playlistId) {
       throw new Error('playlistId is required but was undefined or empty');
     }
-    
+
     logger.userAction('add-local-file-requested', { filePath, playlistId });
     const fileName = path.basename(filePath);
     const fileExt = path.extname(fileName).slice(1);
@@ -1463,7 +1462,7 @@ withErrorHandling('add-local-file', async (event, { filePath, playlistId }) => {
         logger.error('Error extracting duration from audio file', extractError, { filePath });
       }
     }
-    
+
     const track = {
       id: uuidv4(),
       name: path.basename(fileName, path.extname(fileName)),
@@ -1473,13 +1472,13 @@ withErrorHandling('add-local-file', async (event, { filePath, playlistId }) => {
       volume: 0.5,
       addedAt: new Date().toISOString()
     };
-    
-    logger.info('Local file added successfully', { 
-      trackId: track.id, 
-      fileName, 
-      fileType: fileExt 
+
+    logger.info('Local file added successfully', {
+      trackId: track.id,
+      fileName,
+      fileType: fileExt
     });
-    
+
     // Return track with absolute path for renderer (consistent with get-playlists)
     return { ...track, filePath: toAbsolutePath(track.filePath) };
   } catch (error) {
@@ -1502,31 +1501,31 @@ withErrorHandling('add-local-file-content', async (event, { fileName, fileConten
     if (!playlistId) {
       throw new Error('playlistId is required but was undefined or empty');
     }
-    
+
     logger.userAction('add-local-file-content-requested', { fileName, playlistId });
     const fileExt = path.extname(fileName).slice(1);
     const baseName = path.basename(fileName, path.extname(fileName));
     const newPath = path.join(songsPath, fileName);
-    
+
     // If a file with the same name already exists, append a timestamp to avoid overwrite
     let destinationPath = newPath;
     if (fs.existsSync(destinationPath)) {
       const timestamp = Date.now();
       const nameWithTimestamp = `${baseName}_${timestamp}.${fileExt}`;
       destinationPath = path.join(songsPath, nameWithTimestamp);
-      logger.info('File already exists, using timestamped name', { 
-        originalPath: newPath, 
-        newPath: destinationPath 
+      logger.info('File already exists, using timestamped name', {
+        originalPath: newPath,
+        newPath: destinationPath
       });
     }
-    
+
     // Write file content to destination
     await fs.writeFile(destinationPath, Buffer.from(fileContent));
     logger.info('File content written successfully', { destinationPath });
-    
+
     // Get duration using ffprobe
     const duration = await extractAudioDuration(destinationPath);
-    
+
     const track = {
       id: uuidv4(),
       name: path.basename(destinationPath, path.extname(destinationPath)),
@@ -1536,13 +1535,13 @@ withErrorHandling('add-local-file-content', async (event, { fileName, fileConten
       volume: 0.5,
       addedAt: new Date().toISOString()
     };
-    
-    logger.info('Local file content added successfully', { 
-      trackId: track.id, 
-      fileName, 
-      fileType: fileExt 
+
+    logger.info('Local file content added successfully', {
+      trackId: track.id,
+      fileName,
+      fileType: fileExt
     });
-    
+
     // Return track with absolute path for renderer (consistent with get-playlists)
     return { ...track, filePath: toAbsolutePath(track.filePath) };
   } catch (error) {
@@ -1585,7 +1584,8 @@ function validateYouTubeCookies(cookiesPath) {
   try {
     const txt = fs.readFileSync(cookiesPath, 'utf8');
     return /\byoutube\.com\b/i.test(txt) || /\bSID\b|\bSAPISID\b|\b__Secure-3PAPISID\b/i.test(txt);
-  } catch {
+  } catch (err) {
+    logger.debug('Failed to validate YouTube cookies format', err);
     return false;
   }
 }
@@ -1732,7 +1732,7 @@ withErrorHandling('get-backups', async () => {
     return sortedBackups;
   } catch (error) {
     logger.error('Error getting backups', error);
-    return [];
+    throw error;
   }
 });
 
@@ -1788,44 +1788,44 @@ withErrorHandling('export-all-songs', async () => {
   const startTime = Date.now();
   try {
     logger.userAction('export-all-songs-requested');
-    
+
     // Show directory selection dialog
     const result = await dialog.showOpenDialog(mainWindow, {
       title: 'Select Export Destination',
       properties: ['openDirectory'],
       buttonLabel: 'Select Folder'
     });
-    
+
     if (result.canceled || !result.filePaths || result.filePaths.length === 0) {
       return { success: false, message: 'Export cancelled by user' };
     }
-    
+
     const exportPath = result.filePaths[0];
     logger.info('Export destination selected', { exportPath });
-    
+
     // Get all song files from the songs directory
     const songFiles = await fs.readdir(songsPath);
     const audioFiles = songFiles.filter(file => {
       const ext = path.extname(file).toLowerCase();
       return ['.mp3', '.flac', '.ogg', '.m4a', '.wav'].includes(ext);
     });
-    
+
     if (audioFiles.length === 0) {
       return { success: false, message: 'No audio files found to export' };
     }
-    
+
     logger.info(`Starting export of ${audioFiles.length} audio files`);
-    
+
     // Copy each audio file to the export directory
     let copiedCount = 0;
     let failedCount = 0;
     const failedFiles = [];
-    
+
     for (const file of audioFiles) {
       try {
         const sourcePath = path.join(songsPath, file);
         const destPath = path.join(exportPath, file);
-        
+
         // Check if file already exists and create unique name if needed
         let finalDestPath = destPath;
         if (await fs.pathExists(destPath)) {
@@ -1834,7 +1834,7 @@ withErrorHandling('export-all-songs', async () => {
           const timestamp = Date.now();
           finalDestPath = path.join(exportPath, `${basename}_${timestamp}${ext}`);
         }
-        
+
         await fs.copy(sourcePath, finalDestPath);
         copiedCount++;
         logger.info('File exported successfully', { file, destPath: finalDestPath });
@@ -1844,7 +1844,7 @@ withErrorHandling('export-all-songs', async () => {
         logger.warn('Failed to export file', error, { file });
       }
     }
-    
+
     const summary = {
       total: audioFiles.length,
       copied: copiedCount,
@@ -1852,15 +1852,15 @@ withErrorHandling('export-all-songs', async () => {
       failedFiles,
       exportPath
     };
-    
+
     logger.info('Export completed', summary);
-    
+
     return {
       success: true,
       message: `Export completed! ${copiedCount} files copied${failedCount > 0 ? `, ${failedCount} failed` : ''}`,
       ...summary
     };
-    
+
   } catch (error) {
     logger.error('Error during export', error);
     throw error;
@@ -1952,14 +1952,14 @@ app.on('window-all-closed', async () => {
   // Clean up worker pool and broadcast server
   await cleanupWorkerPool();
   await cleanupBroadcastServer();
-  
+
   if (process.platform !== 'darwin') {
     app.quit();
   }
 });
 
-    app.on('activate', () => {
-      if (BrowserWindow.getAllWindows().length === 0) {
-        createWindow();
-      }
-    });
+app.on('activate', () => {
+  if (BrowserWindow.getAllWindows().length === 0) {
+    createWindow();
+  }
+});

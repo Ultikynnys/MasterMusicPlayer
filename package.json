@@ -1,6 +1,6 @@
 {
   "name": "master-music-player",
-  "version": "1.0.21",
+  "version": "1.0.23",
   "description": "A comprehensive music player with yt-dlp integration",
   "main": "src/main.js",
   "scripts": {
@@ -9,6 +9,8 @@
     "prebuild": "node scripts/optimize-build.js",
     "prepackage": "node scripts/pre-package.js",
     "build": "electron-builder",
+    "build-linux": "electron-builder --linux",
+    "build-all": "electron-builder --win --linux",
     "build-optimized": "npm run prebuild && npm run prepackage && electron-builder",
     "install-deps": "npm install"
   },
@@ -102,6 +104,7 @@
     "asar": true,
     "compression": "maximum",
     "win": {
+      "icon": "build/icon.ico",
       "target": {
         "target": "nsis",
         "arch": [
@@ -112,7 +115,7 @@
       "publisherName": "Ultikynnys"
     },
     "linux": {
-      "target": "AppImage",
+      "target": "tar.gz",
       "icon": "build/icon.png",
       "category": "AudioVideo"
     },

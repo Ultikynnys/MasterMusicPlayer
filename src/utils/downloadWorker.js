@@ -10,25 +10,25 @@ const ffmpegPath = process.env.FFMPEG_PATH;
 
 // Helper: spawn with promise
 function spawnPromise(cmd, args, options = {}) {
-    return new Promise((resolve, reject) => {
-        const child = spawn(cmd, args, options);
-        let stdout = '';
-        let stderr = '';
-        child.stdout.on('data', (d) => stdout += d.toString());
-        child.stderr.on('data', (d) => stderr += d.toString());
+  return new Promise((resolve, reject) => {
+    const child = spawn(cmd, args, options);
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (d) => stdout += d.toString());
+    child.stderr.on('data', (d) => stderr += d.toString());
 
-        child.on('close', (code) => {
-            if (code === 0) {
-                resolve({ stdout, stderr });
-            } else {
-                reject({ code, stdout, stderr });
-            }
-        });
-
-        child.on('error', (err) => {
-            reject(err);
-        });
+    child.on('close', (code) => {
+      if (code === 0) {
+        resolve({ stdout, stderr });
+      } else {
+        reject({ code, stdout, stderr });
+      }
     });
+
+    child.on('error', (err) => {
+      reject(err);
+    });
+  });
 }
 
 // Handle messages from the main process
@@ -40,7 +40,7 @@ process.on('message', async (task) => {
       logger.info(`Worker ${workerId} starting download:`, { title: task.trackInfo.title });
       const result = await downloadTrack(task.trackInfo, task.songsPath, task.taskId, task.cookiesPath);
       process.send({ type: 'log', level: 'info', message: `[Worker ${workerId}] Download completed successfully:`, data: result.name });
-      
+
       process.send({ type: 'log', level: 'info', message: `[Worker ${workerId}] Sending completion message for task:`, data: task.taskId });
       process.send({
         type: 'completed',
@@ -99,7 +99,7 @@ async function downloadTrack(initialTrackInfo, songsPath, taskId, cookiesPath) {
     throw new Error('yt-dlp path is not available in worker environment. The download cannot proceed.');
   }
   let trackInfo;
-  
+
   // Store cookies path for potential use later
   const cookiesFilePath = cookiesPath || path.join(path.dirname(songsPath), 'cookies.txt');
   let cookiesFileUsed = false;
@@ -116,10 +116,10 @@ async function downloadTrack(initialTrackInfo, songsPath, taskId, cookiesPath) {
       firstError.stderr.includes('age-restricted') ||
       firstError.stderr.includes('inappropriate for some users')
     );
-    
+
     if (isAgeRestricted && await fs.pathExists(cookiesFilePath)) {
       process.send({ type: 'log', level: 'info', message: `[Worker ${workerId}] Age restriction detected, trying with cookies.txt at ${cookiesFilePath}` });
-      
+
       try {
         const cookieFileArgs = [
           '--dump-single-json',
@@ -133,7 +133,7 @@ async function downloadTrack(initialTrackInfo, songsPath, taskId, cookiesPath) {
         process.send({ type: 'log', level: 'info', message: `[Worker ${workerId}] Metadata fetched successfully with cookies.txt for age-restricted content` });
       } catch (cookieError) {
         process.send({ type: 'log', level: 'warn', message: `[Worker ${workerId}] Cookies.txt failed for age-restricted content. Skipping this track.`, data: { error: cookieError.message } });
-        
+
         // Create specific error for age-restricted content with invalid cookies
         // Mark as skippable so playlist downloads can continue
         const error = new Error('AGE_RESTRICTED_SKIP: This video is age-restricted and requires valid YouTube cookies. Skipping track.');
@@ -144,81 +144,24 @@ async function downloadTrack(initialTrackInfo, songsPath, taskId, cookiesPath) {
     } else if (isAgeRestricted) {
       // Age-restricted but no cookies available - skip immediately
       process.send({ type: 'log', level: 'warn', message: `[Worker ${workerId}] Age-restricted content detected but no cookies.txt available. Skipping this track.` });
-      
+
       const error = new Error('AGE_RESTRICTED_SKIP: This video is age-restricted and requires valid YouTube cookies. No cookies.txt found. Skipping track.');
       error.isAgeRestricted = true;
       error.shouldSkip = true;
       throw error;
     } else {
-      // Not age-restricted, try browser cookies as fallback
-      process.send({ type: 'log', level: 'warn', message: `[Worker ${workerId}] Enhanced bypass failed, trying browser cookies`, data: { error: firstError.message } });
-      
-      // Priority 2: Try with browser cookies
-      const fallbackArgs = [
-        '--dump-single-json',
-        '--no-playlist',
-        '--retries', '3',
-        '--cookies-from-browser', 'firefox',
-        '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:120.0) Gecko/20100101 Firefox/120.0',
-        trackUrl
-      ];
+      // Age restriction not explicitly detected in error, but primary bypass failed
+      logger.error(`Worker ${workerId} failed to fetch metadata with enhanced bypass.`, {
+        error: firstError.message,
+        stderr: firstError.stderr
+      });
 
-      // Priority 3: Try Firefox cookies
-      try {
-        const fallbackResult = await spawnPromise(ytDlpPath, fallbackArgs);
-        trackInfo = JSON.parse(fallbackResult.stdout);
-        process.send({ type: 'log', level: 'info', message: `[Worker ${workerId}] Metadata fetched successfully with Firefox cookies` });
-      } catch (secondError) {
-        process.send({ type: 'log', level: 'warn', message: `[Worker ${workerId}] Firefox cookies failed, trying Chrome cookies`, data: { error: secondError.message } });
-        
-        const chromeArgs = [
-          '--dump-single-json',
-          '--no-playlist',
-          '--retries', '3',
-          '--cookies-from-browser', 'chrome',
-          '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-          trackUrl
-        ];
-        
-        try {
-          const chromeResult = await spawnPromise(ytDlpPath, chromeArgs);
-          trackInfo = JSON.parse(chromeResult.stdout);
-          process.send({ type: 'log', level: 'info', message: `[Worker ${workerId}] Metadata fetched successfully with Chrome cookies` });
-        } catch (thirdError) {
-          // Check if any of the errors indicate age restriction
-          const errors = [firstError, secondError, thirdError];
-          const isAgeRestricted = errors.some(err => 
-            err && err.stderr && (
-              err.stderr.includes('Sign in to confirm your age') ||
-              err.stderr.includes('age-restricted') ||
-              err.stderr.includes('inappropriate for some users')
-            )
-          );
-          
-          let finalErrorMessage;
-          if (isAgeRestricted) {
-            finalErrorMessage = 'AGE_RESTRICTED: This video requires valid YouTube cookies to download.';
-          } else {
-            // Assume it's likely age-restricted since that's the most common cause
-            finalErrorMessage = 'AGE_RESTRICTED: Failed to download this video. This is likely due to age restrictions and requires valid YouTube cookies.';
-          }
-          
-          logger.error(`Worker ${workerId} failed to fetch metadata with all strategies.`, {
-            firstError: firstError.message,
-            secondError: secondError.message,
-            thirdError: thirdError.message,
-            stderr: thirdError.stderr,
-            isAgeRestricted
-          });
-          
-          process.send({ type: 'log', level: 'error', message: `[Worker ${workerId}] ${finalErrorMessage}` });
-          
-          // Create error with specific type for better handling
-          const error = new Error(finalErrorMessage);
-          error.isAgeRestricted = isAgeRestricted;
-          throw error;
-        }
-      }
+      const finalErrorMessage = 'Failed to download this video. This may be due to age restrictions or other YouTube blocks. Please ensure you are providing a valid URL.';
+      process.send({ type: 'log', level: 'error', message: `[Worker ${workerId}] ${finalErrorMessage}` });
+
+      const error = new Error(finalErrorMessage);
+      error.isAgeRestricted = false;
+      throw error;
     }
   }
 
@@ -248,7 +191,7 @@ async function downloadTrack(initialTrackInfo, songsPath, taskId, cookiesPath) {
     '-o', finalFilename,
     trackUrl
   ];
-  
+
   // Only attach cookies to download if they were used successfully for metadata
   if (cookiesFileUsed) {
     process.send({ type: 'log', level: 'info', message: `[Worker ${workerId}] Using cookies.txt for download since metadata required them` });
@@ -285,10 +228,10 @@ async function downloadTrack(initialTrackInfo, songsPath, taskId, cookiesPath) {
       downloadProcess.stderr.on('data', (data) => {
         const output = data.toString();
         stderr += output;
-        
+
         // Debug: log all stderr output to see what yt-dlp actually sends
         process.send({ type: 'log', level: 'debug', message: `[Worker ${workerId}] yt-dlp stderr:`, data: output.trim() });
-        
+
         const progressMatch = output.match(/\s(\d{1,3}(\.\d)?)%/);
         if (progressMatch) {
           const progress = parseFloat(progressMatch[1]);
@@ -354,10 +297,10 @@ async function downloadTrack(initialTrackInfo, songsPath, taskId, cookiesPath) {
     downloadDate: new Date().toISOString()
   };
 
-  logger.info(`Worker ${workerId} completed download:`, { 
-    name: track.name, 
+  logger.info(`Worker ${workerId} completed download:`, {
+    name: track.name,
     size: `${(stats.size / 1024 / 1024).toFixed(2)}MB`,
-    duration: track.duration 
+    duration: track.duration
   });
 
   return track;
