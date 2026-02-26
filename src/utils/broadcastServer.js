@@ -1205,8 +1205,15 @@ class BroadcastServer extends EventEmitter {
                 } else {
                     // Same track - sync time and play/pause using serverCurrentTime only
                     if (allowSync) {
+                        const serverTime = (typeof state.serverCurrentTime === 'number') ? state.serverCurrentTime : (typeof state.currentTime === 'number' ? state.currentTime : 0);
+                        
+                        // Reset localEnded if an explicit seek/repeat happens or the server time goes back significantly
+                        if (state.action === 'seek' || (localEnded && typeof state.duration === 'number' && (state.duration - serverTime) > 1.0)) {
+                            localEnded = false;
+                        }
+
                         // If server already ended this track, pause locally and wait
-                        const serverEnded = (typeof state.duration === 'number' && state.duration > 0 && (serverTimeNow >= (state.duration - 0.2)));
+                        const serverEnded = (typeof state.duration === 'number' && state.duration > 0 && (serverTime >= (state.duration - 0.2)));
                         if (serverEnded) {
                             localEnded = true;
                             audioPlayer.pause();
@@ -1220,7 +1227,6 @@ class BroadcastServer extends EventEmitter {
                                 if (st) st.textContent = 'Waiting for next track...';
                             }
                         } else {
-                            const serverTime = (typeof state.serverCurrentTime === 'number') ? state.serverCurrentTime : (typeof state.currentTime === 'number' ? state.currentTime : 0);
                             // Only on explicit seek: set playback position to serverTime
                             if (state.action === 'seek') {
                                 const ts = (typeof state.actionAt === 'number') ? state.actionAt : Date.now();
@@ -1230,19 +1236,15 @@ class BroadcastServer extends EventEmitter {
                                     lastActionAppliedAt = ts; // apply once per action event
                                 }
                             } else {
-                                // Apply soft and hard drift correction to stay synced
+                                // Apply hard drift correction only (no playbackRate stretching to avoid audio rubberbanding)
                                 const diff = serverTime - audioPlayer.currentTime;
-                                if (Math.abs(diff) > 2.0) {
-                                    // Hard sync if drift is > 2 seconds
+                                if (Math.abs(diff) > 2.5) {
+                                    // Hard sync if drift is > 2.5 seconds
                                     audioPlayer.currentTime = serverTime;
-                                } else if (diff > 0.2) {
-                                    // Client is behind (server time > client time)
-                                    audioPlayer.playbackRate = 1.05;
-                                } else if (diff < -0.2) {
-                                    // Client is ahead (server time < client time)
-                                    audioPlayer.playbackRate = 0.95;
-                                } else {
-                                    // Fast recovery to normal speed if close enough
+                                }
+                                
+                                // Always enforce normal speed
+                                if (audioPlayer.playbackRate !== 1.0) {
                                     audioPlayer.playbackRate = 1.0;
                                 }
                             }
@@ -1332,21 +1334,57 @@ class BroadcastServer extends EventEmitter {
             }
         });
         
-        // Initialize Server-Sent Events for immediate updates
-        try {
-            const es = new EventSource(getApiUrl('/api/events'));
-            es.addEventListener('state_update', (e) => {
-                try {
-                    const payload = JSON.parse(e.data);
-                    // timestamp handling not needed
-                    const state = payload ? payload.data : null;
-                    if (state) processUpdate(state);
-                } catch (err) { console.log('SSE parse error', err); }
-            });
-            es.onerror = () => { console.log('SSE error'); };
-        } catch (err) {
-            console.log('SSE not available', err);
+        // Initialize Server-Sent Events with auto-reconnect
+        let es = null;
+        let reconnectTimeout = null;
+        let sseConnected = false;
+        
+        function initSSE() {
+            if (es) {
+                es.close();
+                es = null;
+            }
+            try {
+                es = new EventSource(getApiUrl('/api/events'));
+                
+                es.onopen = () => {
+                    console.log('SSE connected');
+                    sseConnected = true;
+                    const st = document.getElementById('status-text');
+                    if (st && st.textContent.includes('Reconnecting')) {
+                        st.textContent = isConnected && currentTrackId ? 'Playing' : 'Waiting for track...';
+                    }
+                };
+
+                es.addEventListener('state_update', (e) => {
+                    try {
+                        const payload = JSON.parse(e.data);
+                        const state = payload ? payload.data : null;
+                        if (state) processUpdate(state);
+                    } catch (err) { console.log('SSE parse error', err); }
+                });
+                
+                es.onerror = () => {
+                    console.log('SSE error, connection lost');
+                    sseConnected = false;
+                    es.close();
+                    
+                    const st = document.getElementById('status-text');
+                    if (st) st.textContent = 'Reconnecting...';
+                    
+                    // Attempt to reconnect after 3 seconds
+                    clearTimeout(reconnectTimeout);
+                    reconnectTimeout = setTimeout(initSSE, 3000);
+                };
+            } catch (err) {
+                console.log('SSE initialization failed', err);
+                clearTimeout(reconnectTimeout);
+                reconnectTimeout = setTimeout(initSSE, 5000);
+            }
         }
+        
+        // Start connection
+        initSSE();
 
     </script>
 </body>

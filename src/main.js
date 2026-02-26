@@ -159,27 +159,46 @@ let appDataPath = path.join(__dirname, '..', 'data');
 let songsPath = path.join(appDataPath, 'songs');
 let playlistsPath = path.join(appDataPath, 'playlists');
 let configPath = path.join(appDataPath, 'config');
-let backupsPath = path.join(appDataPath, 'backups');
 
-function initialisePaths() {
+async function initialisePaths() {
+  let baseDataPath;
   // 1. If running from an electron-builder *portable* build, the stub sets
   //    PORTABLE_EXECUTABLE_DIR to the directory that contains the portable EXE.
   //    We prefer this location so everything lives next to the executable and
   //    users can move the folder around.
   if (process.env.PORTABLE_EXECUTABLE_DIR) {
-    appDataPath = path.join(process.env.PORTABLE_EXECUTABLE_DIR, 'data');
-  } else if (app.isPackaged) {
-    // 2. Regular installed/NSIS build – use userData (roaming AppData).
-    appDataPath = path.join(app.getPath('userData'), 'data');
+    baseDataPath = path.join(process.env.PORTABLE_EXECUTABLE_DIR, 'data');
   } else {
-    // 3. Development run – keep relative to repo for convenience.
-    appDataPath = path.join(__dirname, '..', 'data');
+    // 2. Regular installed/NSIS build & Development – use userData (roaming AppData).
+    baseDataPath = path.join(app.getPath('userData'), 'data');
   }
+
+  let baseSettingsPath;
+  if (process.env.PORTABLE_EXECUTABLE_DIR) {
+    baseSettingsPath = process.env.PORTABLE_EXECUTABLE_DIR;
+  } else {
+    baseSettingsPath = app.getPath('userData');
+  }
+
+  const globalSettingsPath = path.join(baseSettingsPath, 'settings-global.json');
+  let customDataPath = null;
+
+  try {
+    if (await fs.pathExists(globalSettingsPath)) {
+      const globalSettings = await fs.readJson(globalSettingsPath);
+      if (globalSettings && globalSettings.customDataPath) {
+        customDataPath = globalSettings.customDataPath;
+      }
+    }
+  } catch (err) {
+    logger.error('Failed to read global settings', err);
+  }
+
+  appDataPath = customDataPath ? customDataPath : baseDataPath;
 
   songsPath = path.join(appDataPath, 'songs');
   playlistsPath = path.join(appDataPath, 'playlists');
   configPath = path.join(appDataPath, 'config');
-  backupsPath = path.join(appDataPath, 'backups');
   appConfigPath = path.join(configPath, 'app.json');
 }
 
@@ -218,7 +237,6 @@ async function createDataDirectories() {
     await fs.ensureDir(songsPath);
     await fs.ensureDir(playlistsPath);
     await fs.ensureDir(configPath);
-    await fs.ensureDir(backupsPath);
     logger.info('Data directories created or verified');
   } catch (error) {
     logger.error('Failed to create data directories', error);
@@ -371,7 +389,7 @@ function createWindow() {
 
 app.whenReady().then(async () => {
   // Determine correct writable paths first
-  initialisePaths();
+  await initialisePaths();
   // Ensure data directories now that paths point to writable location
   await createDataDirectories();
   // Initialize file lock
@@ -1622,132 +1640,104 @@ async function clearDirectoryWithRetries(dirPath, retries = 3, delayMs = 500) {
   }
 }
 
-// IPC handlers for backup/restore
-withErrorHandling('create-backup', () => {
-  const startTime = Date.now();
-  return new Promise((resolve, reject) => {
-    logger.userAction('create-backup-requested');
-    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const backupFile = path.join(backupsPath, `backup-${timestamp}.zip`);
-    const output = fs.createWriteStream(backupFile);
-    const archive = archiver('zip', { zlib: { level: 9 } });
+// Data Path Override IPC handlers
+withErrorHandling('get-current-data-path', async () => {
+  return appDataPath;
+});
 
-    output.on('close', async () => {
-      try {
-        const songCount = (await fs.readdir(songsPath)).length;
-        const playlistCount = (await fs.readdir(playlistsPath)).length;
-        logger.info('Backup created successfully', { backupFile, playlistCount, songCount });
-        resolve(backupFile);
-      } catch (err) {
-        logger.error('Error getting backup stats', err);
-        reject(err);
-      }
-    });
-
-    archive.on('warning', (err) => {
-      if (err.code === 'ENOENT') {
-        logger.warn('Archiver warning: ', err);
-      } else {
-        logger.error('Archiver error: ', err);
-        reject(err);
-      }
-    });
-
-    archive.on('error', (err) => {
-      logger.error('Error creating backup archive', err);
-      reject(err);
-    });
-
-    archive.pipe(output);
-    archive.directory(playlistsPath, 'playlists');
-    archive.directory(songsPath, 'songs');
-    archive.finalize();
+withErrorHandling('change-data-path', async (event, currentPath) => {
+  logger.userAction('change-data-path-requested');
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: 'Select New Global Data Directory',
+    properties: ['openDirectory', 'createDirectory']
   });
-});
 
-withErrorHandling('restore-backup', async (event, backupFile) => {
-  const startTime = Date.now();
+  if (result.canceled || !result.filePaths || result.filePaths.length === 0) {
+    return { success: false, message: 'Selection cancelled' };
+  }
+
+  const newPath = result.filePaths[0];
+
+  // Check if new path is essentially the same as current
+  if (path.resolve(newPath) === path.resolve(appDataPath)) {
+    return { success: false, message: 'Selected directory is already the active directory' };
+  }
+
+  // Ask if user wants to copy existing data over
+  const copyResponse = await dialog.showMessageBox(mainWindow, {
+    type: 'question',
+    buttons: ['Copy Existing Data', 'Start Fresh', 'Cancel'],
+    defaultId: 0,
+    title: 'Migrate Data?',
+    message: 'Do you want to copy your existing songs, playlists, and settings to the new location?',
+    detail: 'Copy Existing Data: Moves your current library to the new folder.\nStart Fresh: Leaves existing data where it is and uses the new folder as a clean slate.'
+  });
+
+  if (copyResponse.response === 2) {
+    return { success: false, message: 'Migration cancelled' };
+  }
+
   try {
-    logger.userAction('restore-backup-requested', { backupFile });
-
-    // Notify renderer to stop playback and release file handles
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('stop-playback');
-      // Give renderer a moment to release file locks
-      // Ask renderer to stop playback and wait for confirmation (max 3s)
-      const playbackStopped = new Promise(res => {
-        const timeout = setTimeout(() => res(false), 3000);
-        ipcMain.once('playback-stopped', () => {
-          clearTimeout(timeout);
-          res(true);
-        });
-      });
-      mainWindow.webContents.send('stop-playback');
-      await playbackStopped;
+    if (copyResponse.response === 0) {
+      logger.info('Copying existing app data to new location', { from: appDataPath, to: newPath });
+      await fs.copy(appDataPath, newPath, { overwrite: true });
     }
 
-    // Clear existing data with robust retry handling to avoid file-lock errors
-    await clearDirectoryWithRetries(playlistsPath);
-    await clearDirectoryWithRetries(songsPath);
-
-    // Extract backup to the app data directory
-    await extract(backupFile, { dir: appDataPath });
-
-    const songCount = (await fs.readdir(songsPath)).length;
-    const playlistCount = (await fs.readdir(playlistsPath)).length;
-
-    logger.info('Backup restored successfully', {
-      backupFile,
-      playlistsRestored: playlistCount,
-      songsRestored: songCount
-    });
-
-    return true;
-  } catch (error) {
-    logger.error('Error restoring backup', error, { backupFile });
-    throw error;
-  }
-});
-
-withErrorHandling('get-backups', async () => {
-  const startTime = Date.now();
-  try {
-    logger.userAction('get-backups-requested');
-    const files = await fs.readdir(backupsPath);
-    const backups = [];
-
-    for (const file of files) {
-      if (file.endsWith('.zip') && file.startsWith('backup-')) {
-        const filePath = path.join(backupsPath, file);
-        const stats = await fs.stat(filePath);
-        backups.push({
-          name: file,
-          path: filePath,
-          createdAt: stats.birthtime
-        });
-      }
+    let baseSettingsPath;
+    if (process.env.PORTABLE_EXECUTABLE_DIR) {
+      baseSettingsPath = process.env.PORTABLE_EXECUTABLE_DIR;
+    } else {
+      baseSettingsPath = app.getPath('userData');
     }
 
-    const sortedBackups = backups.sort((a, b) => b.createdAt - a.createdAt);
-    return sortedBackups;
+    await fs.ensureDir(baseSettingsPath);
+    const globalSettingsPath = path.join(baseSettingsPath, 'settings-global.json');
+    let globalSettings = {};
+    if (await fs.pathExists(globalSettingsPath)) {
+      globalSettings = await fs.readJson(globalSettingsPath);
+    }
+    globalSettings.customDataPath = newPath;
+    await fs.writeJson(globalSettingsPath, globalSettings, { spaces: 2 });
+
+    logger.info('Global data path updated. Relaunching application.');
+
+    // Relaunch the application and quit the current instance
+    app.relaunch();
+    app.quit();
+    return { success: true };
   } catch (error) {
-    logger.error('Error getting backups', error);
+    logger.error('Failed to change data path', error);
     throw error;
   }
 });
 
-withErrorHandling('delete-backup', async (event, backupPath) => {
-  const startTime = Date.now();
+withErrorHandling('reset-data-path', async () => {
+  logger.userAction('reset-data-path-requested');
+  let baseSettingsPath;
+  if (process.env.PORTABLE_EXECUTABLE_DIR) {
+    baseSettingsPath = process.env.PORTABLE_EXECUTABLE_DIR;
+  } else {
+    baseSettingsPath = app.getPath('userData');
+  }
+
+  const globalSettingsPath = path.join(baseSettingsPath, 'settings-global.json');
   try {
-    logger.userAction('delete-backup-requested', { backupPath });
-    await fs.remove(backupPath);
-    logger.info('Backup deleted successfully', { backupPath });
-    return true;
+    if (await fs.pathExists(globalSettingsPath)) {
+      const globalSettings = await fs.readJson(globalSettingsPath);
+      delete globalSettings.customDataPath;
+      await fs.writeJson(globalSettingsPath, globalSettings, { spaces: 2 });
+      logger.info('Data path reset to default. Relaunching application.');
+      app.relaunch();
+      app.quit();
+      return { success: true };
+    }
+    return { success: false, message: 'Already using default path' };
   } catch (error) {
-    logger.error('Error deleting backup', error, { backupPath });
+    logger.error('Failed to reset data path', error);
     throw error;
   }
 });
+
 
 // Duration management
 
@@ -1865,6 +1855,97 @@ withErrorHandling('export-all-songs', async () => {
     logger.error('Error during export', error);
     throw error;
   }
+});
+
+withErrorHandling('export-track', async (event, track) => {
+  logger.userAction('export-track-requested', { trackId: track.id });
+  if (!track || !track.filePath) {
+    throw new Error('Track has no valid file path');
+  }
+
+  const ext = path.extname(track.filePath).replace('.', '') || 'mp3';
+  // Replace invalid characters for Windows paths
+  let safeName = (track.name || 'track').replace(/[<>:"/\\|?*]+/g, '_');
+  const defaultName = `${safeName}.${ext}`;
+
+  const result = await dialog.showSaveDialog(mainWindow, {
+    title: 'Download Track',
+    defaultPath: defaultName,
+    filters: [{ name: 'Audio File', extensions: [ext] }]
+  });
+
+  if (result.canceled || !result.filePath) {
+    return { success: false, message: 'Download cancelled' };
+  }
+
+  const sourcePath = toAbsolutePath(track.filePath);
+  await fs.copy(sourcePath, result.filePath);
+  logger.info('Track exported successfully', { source: sourcePath, dest: result.filePath });
+  return { success: true, message: 'Track downloaded' };
+});
+
+withErrorHandling('export-playlist', async (event, playlist) => {
+  logger.userAction('export-playlist-requested', { playlistId: playlist.id });
+  if (!playlist || !playlist.tracks || playlist.tracks.length === 0) {
+    throw new Error('Playlist is empty or invalid');
+  }
+
+  let safeName = (playlist.name || 'playlist').replace(/[<>:"/\\|?*]+/g, '_');
+  const defaultName = `${safeName}.zip`;
+
+  const result = await dialog.showSaveDialog(mainWindow, {
+    title: 'Download Playlist',
+    defaultPath: defaultName,
+    filters: [{ name: 'ZIP Archive', extensions: ['zip'] }]
+  });
+
+  if (result.canceled || !result.filePath) {
+    return { success: false, message: 'Download cancelled' };
+  }
+
+  return new Promise((resolve, reject) => {
+    const output = fs.createWriteStream(result.filePath);
+    const archive = archiver('zip', {
+      zlib: { level: 9 } // Sets the compression level.
+    });
+
+    output.on('close', function () {
+      logger.info('Playlist exported successfully', { dest: result.filePath, bytes: archive.pointer() });
+      resolve({ success: true, message: 'Playlist downloaded' });
+    });
+
+    archive.on('error', function (err) {
+      logger.error('Error creating playlist zip', err);
+      reject(err);
+    });
+
+    archive.pipe(output);
+
+    // Track names added to avoid duplicate file names in the zip
+    const addedNames = new Set();
+
+    for (const track of playlist.tracks) {
+      if (track.filePath) {
+        const sourcePath = toAbsolutePath(track.filePath);
+        if (fs.existsSync(sourcePath)) {
+          const ext = path.extname(sourcePath);
+          let baseName = (track.name || 'Unknown Track').replace(/[<>:"/\\|?*]+/g, '_');
+          let fileName = `${baseName}${ext}`;
+
+          let counter = 1;
+          while (addedNames.has(fileName)) {
+            fileName = `${baseName} (${counter})${ext}`;
+            counter++;
+          }
+
+          addedNames.add(fileName);
+          archive.file(sourcePath, { name: fileName });
+        }
+      }
+    }
+
+    archive.finalize();
+  });
 });
 
 // Frontend logging handler

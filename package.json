@@ -85,16 +85,8 @@
       "!node_modules/**/*.d.ts",
       "!node_modules/**/LICENSE*",
       "!node_modules/**/license*",
-      "!node_modules/ffmpeg-static/bin/linux/**",
       "!node_modules/ffmpeg-static/bin/darwin/**",
-      "!node_modules/ffprobe-static/bin/linux/**",
       "!node_modules/ffprobe-static/bin/darwin/**"
-    ],
-    "extraResources": [
-      {
-        "from": "src/vendor/yt-dlp.exe",
-        "to": "vendor/yt-dlp.exe"
-      }
     ],
     "asarUnpack": [
       "**/vendor/**",
@@ -112,12 +104,32 @@
         ]
       },
       "legalTrademarks": "Master Music Player",
-      "publisherName": "Ultikynnys"
+      "publisherName": "Ultikynnys",
+      "extraResources": [
+        {
+          "from": "src/vendor/yt-dlp.exe",
+          "to": "vendor/yt-dlp.exe"
+        }
+      ],
+      "files": [
+        "!node_modules/ffmpeg-static/bin/linux/**",
+        "!node_modules/ffprobe-static/bin/linux/**"
+      ]
     },
     "linux": {
       "target": "tar.gz",
       "icon": "build/icon.png",
-      "category": "AudioVideo"
+      "category": "AudioVideo",
+      "extraResources": [
+        {
+          "from": "src/vendor/yt-dlp",
+          "to": "vendor/yt-dlp"
+        }
+      ],
+      "files": [
+        "!node_modules/ffmpeg-static/bin/win32/**",
+        "!node_modules/ffprobe-static/bin/win32/**"
+      ]
     },
     "nsis": {
       "oneClick": false,

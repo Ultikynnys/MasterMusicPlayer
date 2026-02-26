@@ -10,16 +10,15 @@ const projectRoot = path.join(__dirname, '..');
 
 async function prePackageOptimization() {
   console.log('Running pre-package optimization...');
-  
+
   // Remove large unused vendor binaries for other platforms
   const vendorPath = path.join(projectRoot, 'src', 'vendor');
   const unnecessaryVendorFiles = [
-    path.join(vendorPath, 'yt-dlp'), // Linux binary
     path.join(vendorPath, 'yt-dlp_macos') // macOS binary
   ];
-  
+
   let totalSaved = 0;
-  
+
   for (const filePath of unnecessaryVendorFiles) {
     try {
       if (await fs.pathExists(filePath)) {
@@ -32,7 +31,7 @@ async function prePackageOptimization() {
       console.warn(`Warning: Could not remove ${filePath}:`, error.message);
     }
   }
-  
+
   console.log(`Pre-package optimization complete! Space saved: ${formatBytes(totalSaved)}`);
 }
 

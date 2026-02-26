@@ -17,7 +17,7 @@ const unnecessaryPaths = [
   '**/__tests__',
   '**/spec',
   '**/specs',
-  
+
   // Documentation
   '**/docs',
   '**/doc',
@@ -28,14 +28,14 @@ const unnecessaryPaths = [
   '**/samples',
   '**/demo',
   '**/demos',
-  
+
   // Development files
   '**/.github',
   '**/.vscode',
   '**/.idea',
   '**/coverage',
   '**/.nyc_output',
-  
+
   // Unnecessary files
   '**/*.md',
   '**/README*',
@@ -49,23 +49,21 @@ const unnecessaryPaths = [
   '**/tsconfig.json',
   '**/*.ts.map',
   '**/*.d.ts',
-  
+
   // Specific large packages we can optimize
-  'ffmpeg-static/bin/linux',
   'ffmpeg-static/bin/darwin',
-  'ffprobe-static/bin/linux',
   'ffprobe-static/bin/darwin',
 ];
 
 async function optimizeBuild() {
   console.log('Starting build optimization...');
-  
+
   let totalSaved = 0;
-  
+
   for (const pattern of unnecessaryPaths) {
     try {
       const fullPath = path.join(nodeModulesPath, pattern);
-      
+
       // Handle glob patterns
       if (pattern.includes('**')) {
         // For glob patterns, we need to search recursively
@@ -84,14 +82,14 @@ async function optimizeBuild() {
       console.warn(`Warning: Could not remove ${pattern}:`, error.message);
     }
   }
-  
+
   console.log(`\nOptimization complete! Total space saved: ${formatBytes(totalSaved)}`);
 }
 
 async function removeGlobPattern(basePath, pattern) {
   const glob = require('glob');
   const matches = glob.sync(pattern, { cwd: basePath, absolute: true });
-  
+
   for (const match of matches) {
     try {
       if (await fs.pathExists(match)) {

@@ -297,16 +297,17 @@ document.addEventListener('DOMContentLoaded', async () => {
     saveThemeBtn: document.getElementById('save-theme-btn'),
     resetThemeBtn: document.getElementById('reset-theme-btn'),
 
-    // Backup controls
-    backupBtn: document.getElementById('backup-btn'),
-    createBackupBtn: document.getElementById('create-backup-btn'),
-    backupsList: document.getElementById('backups-list'),
 
     // Settings controls
     settingsBtn: document.getElementById('settings-btn'),
     visualizerEnabled: document.getElementById('visualizer-enabled'),
     saveRepeatState: document.getElementById('save-repeat-state'),
     saveTrackTime: document.getElementById('save-track-time'),
+
+    // Storage controls
+    currentDataPath: document.getElementById('current-data-path'),
+    changeDataPathBtn: document.getElementById('change-data-path-btn'),
+    resetDataPathBtn: document.getElementById('reset-data-path-btn'),
 
     // Broadcast controls
     broadcastEnabled: document.getElementById('broadcast-enabled'),
@@ -421,8 +422,7 @@ async function initializeApp() {
     // Load playlists
     await loadPlaylists();
 
-    // Load backups
-    await loadBackups();
+
 
     // Set initial state for buttons
     updateDownloadButtonState();
@@ -849,9 +849,27 @@ function createPlaylistElement(playlist) {
   const deleteButton = createDOMElement('button', 'btn btn-small btn-icon btn-secondary');
   deleteButton.title = 'Delete Playlist';
   deleteButton.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-trash-2 icon-white"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg>`;
-  deleteButton.onclick = () => deletePlaylist(playlist.id);
+  deleteButton.onclick = (e) => {
+    e.stopPropagation();
+    deletePlaylist(playlist.id);
+  };
 
-  actions.append(renameButton, deleteButton);
+  const downloadButton = createDOMElement('button', 'btn btn-small btn-icon btn-primary');
+  downloadButton.title = 'Download Playlist';
+  downloadButton.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-download icon-white"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>`;
+  downloadButton.onclick = async (e) => {
+    e.stopPropagation();
+    try {
+      const result = await ipcRenderer.invoke('export-playlist', playlist);
+      if (result && result.success) showErrorNotification('Download Complete', result.message);
+      else if (result && !result.success && result.message !== 'Download cancelled') showErrorNotification('Download Failed', result.message);
+    } catch (err) {
+      frontendLogger.error('Playlist download error', err);
+      showErrorNotification('Download Error', 'Failed to compress and download playlist.');
+    }
+  };
+
+  actions.append(downloadButton, renameButton, deleteButton);
   header.append(name, actions);
 
   const trackCount = createDOMElement('div', 'playlist-track-count', {}, formatPlaylistInfo(playlist));
@@ -980,7 +998,22 @@ function createTrackElement(track, index) {
   removeButton.title = 'Remove from Playlist';
   removeButton.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-trash-2 icon-white"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg>`;
 
-  actions.append(volumeControl, renameButton, removeButton);
+  const downloadButton = createDOMElement('button', 'btn btn-small btn-icon btn-primary track-download-btn');
+  downloadButton.title = 'Download Track';
+  downloadButton.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-download icon-white"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>`;
+  downloadButton.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    try {
+      const result = await ipcRenderer.invoke('export-track', track);
+      if (result && result.success) showErrorNotification('Download Complete', result.message);
+      else if (result && !result.success && result.message !== 'Download cancelled') showErrorNotification('Download Failed', result.message);
+    } catch (err) {
+      frontendLogger.error('Track download error', err);
+      showErrorNotification('Download Error', 'Failed to download track.');
+    }
+  });
+
+  actions.append(volumeControl, downloadButton, renameButton, removeButton);
   trackEl.append(dragHandle, trackInfoEl, actions);
 
   volumeSlider.addEventListener('input', async (e) => {
@@ -1586,104 +1619,6 @@ function toggleMute() {
   }
 }
 
-// Backup functions
-async function loadBackups() {
-  try {
-    const backups = await ipcRenderer.invoke('get-backups');
-    renderBackups(backups);
-  } catch (error) {
-    frontendLogger.error('Error loading backups', error);
-    showErrorNotification('Backup Error', 'Failed to load backups.');
-  }
-}
-
-function renderBackups(backups) {
-  elements.backupsList.innerHTML = '';
-
-  backups.forEach(backup => {
-    const backupElement = createBackupElement(backup);
-    elements.backupsList.appendChild(backupElement);
-  });
-}
-
-function createBackupElement(backup) {
-  const div = document.createElement('div');
-  div.className = 'backup-item';
-
-  const infoDiv = document.createElement('div');
-  infoDiv.className = 'backup-info';
-  infoDiv.innerHTML = `
-    <span class="backup-name">${backup.name}</span>
-    <span class="backup-date">Created: ${new Date(backup.createdAt).toLocaleString()}</span>
-  `;
-
-  const actionsDiv = document.createElement('div');
-  actionsDiv.className = 'backup-actions';
-
-  const restoreBtn = document.createElement('button');
-  restoreBtn.className = 'btn btn-secondary';
-  restoreBtn.textContent = 'Restore';
-  restoreBtn.addEventListener('click', () => restoreBackup(backup.path));
-
-  const deleteBtn = document.createElement('button');
-  deleteBtn.className = 'btn btn-secondary';
-  deleteBtn.textContent = 'Delete';
-  deleteBtn.addEventListener('click', () => deleteBackup(backup.path));
-
-  actionsDiv.appendChild(restoreBtn);
-  actionsDiv.appendChild(deleteBtn);
-
-  div.appendChild(infoDiv);
-  div.appendChild(actionsDiv);
-
-  return div;
-}
-
-async function createBackup() {
-  try {
-    frontendLogger.info('Creating backup...');
-    showLoading('Creating backup archive...');
-    const backupFile = await ipcRenderer.invoke('create-backup');
-    frontendLogger.info('Backup created successfully', { backupFile });
-    await loadBackups(); // Refresh the list
-  } catch (error) {
-    frontendLogger.error('Error creating backup', error);
-    showErrorNotification('Backup Error', 'Failed to create backup.');
-  } finally {
-    hideLoading();
-  }
-}
-
-async function restoreBackup(backupPath) {
-  if (await confirmDialog('Restoring a backup will overwrite current data. Are you sure?', 'Restore Backup')) {
-    try {
-      frontendLogger.info('Restoring backup...', { backupPath });
-      showLoading('Restoring from backup...');
-      await ipcRenderer.invoke('restore-backup', backupPath);
-      frontendLogger.info('Backup restored successfully');
-
-      // Reload the app to apply changes
-      window.location.reload();
-    } catch (error) {
-      frontendLogger.error('Error restoring backup', error);
-      showErrorNotification('Restore Error', 'Failed to restore backup.');
-    } finally {
-      hideLoading();
-    }
-  }
-}
-
-async function deleteBackup(backupPath) {
-  if (await confirmDialog('Are you sure you want to delete this backup?', 'Delete Backup')) {
-    try {
-      await ipcRenderer.invoke('delete-backup', backupPath);
-      await loadBackups();
-    } catch (error) {
-      frontendLogger.error('Error deleting backup', error);
-      showErrorNotification('Backup Error', 'Failed to delete backup.');
-    }
-  }
-}
 
 // Event listeners
 let isSeekDragging = false; // shared between UI handlers and audioElement.onseeked
@@ -1876,7 +1811,43 @@ function setupEventListeners() {
     });
   }
 
+  if (elements.themeBtn) elements.themeBtn.addEventListener('click', () => showModal('theme-modal'));
+  if (elements.settingsBtn) elements.settingsBtn.addEventListener('click', () => {
+    loadSettings();
+    showModal('settings-modal');
+  });
 
+  if (elements.changeDataPathBtn) {
+    elements.changeDataPathBtn.addEventListener('click', async () => {
+      showLoading('Awaiting folder selection...');
+      try {
+        const result = await ipcRenderer.invoke('change-data-path');
+        if (!result.success && result.message) {
+          showErrorNotification('Data Path', result.message);
+        }
+      } catch (err) {
+        showErrorNotification('Error', 'Failed to change data path');
+      } finally {
+        hideLoading();
+      }
+    });
+  }
+
+  if (elements.resetDataPathBtn) {
+    elements.resetDataPathBtn.addEventListener('click', async () => {
+      showLoading('Resetting to default...');
+      try {
+        const result = await ipcRenderer.invoke('reset-data-path');
+        if (!result.success && result.message) {
+          showErrorNotification('Data Path', result.message);
+        }
+      } catch (err) {
+        showErrorNotification('Error', 'Failed to reset data path');
+      } finally {
+        hideLoading();
+      }
+    });
+  }
 
   // Modal controls
   document.querySelectorAll('.modal-close').forEach(btn => {
@@ -2696,6 +2667,10 @@ async function loadSettings() {
 
     // Initialize broadcast UI
     await updateBroadcastUI();
+
+    // Load data path
+    const currentDataPath = await ipcRenderer.invoke('get-current-data-path');
+    if (elements.currentDataPath) elements.currentDataPath.value = currentDataPath;
 
     return appConfig;
   } catch (error) {
