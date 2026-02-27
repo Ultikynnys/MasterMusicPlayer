@@ -1,0 +1,21 @@
+@use 'abstracts/variables';
+@use 'base/base';
+@use 'layout/main';
+@use 'components/controls';
+@use 'components/header';
+@use 'components/playlist';
+@use 'components/tracks_player';
+@use 'components/modal';
+
+/* Add any remaining one-off styles here or in specific modules later */
+.broadcast-section {
+    border-top: 1px solid var(--border-color);
+    padding-top: 1rem;
+    margin-top: 1rem;
+}
+
+.shareable-url {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}

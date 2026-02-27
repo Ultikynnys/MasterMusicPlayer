@@ -1,0 +1,21 @@
+/* CSS Custom Properties for Theme */
+:root {
+    /* Core theme colors are set dynamically from renderer.js */
+    --primary-color: #8b5cf6;
+    --secondary-color: #374151;
+    --visualizer-color: #10b981;
+    --danger-color: #ef4444;
+    --slider-handle-color: var(--primary-color);
+
+    /* Fallback values for dynamically generated colors */
+    --container-color: #4b5563;
+    --surface-color: #4b5563;
+    --border-color: #6b7280;
+    --hover-color: #a78bfa;
+    --secondary-hover: #4b5563;
+    --theme-text-color: #ffffff;
+    --theme-text-shadow: none;
+    --theme-icon-color: #ffffff;
+    --slider-handle-border: #4b5563;
+    --placeholder-color: #9ca3af;
+}

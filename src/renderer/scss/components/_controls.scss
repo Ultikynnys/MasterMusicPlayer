@@ -1,0 +1,236 @@
+/* UI Components */
+.btn {
+    padding: 0.5rem 1rem;
+    border: none;
+    border-radius: 6px;
+    font-size: 0.875rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+
+    &:hover {
+        transform: translateY(-1px);
+    }
+
+    &:active {
+        transform: translateY(0);
+    }
+
+    &:disabled {
+        opacity: 0.5 !important;
+        cursor: not-allowed !important;
+        pointer-events: none !important;
+        background-color: #6b7280 !important;
+        color: #9ca3af !important;
+        border-color: #4b5563 !important;
+
+        &:hover {
+            background-color: #6b7280 !important;
+            color: #9ca3af !important;
+            transform: none !important;
+            box-shadow: none !important;
+        }
+    }
+}
+
+.btn-secondary {
+    background-color: transparent;
+    border: 1px solid var(--secondary-color);
+
+    &:hover {
+        background-color: var(--primary-color);
+    }
+}
+
+.btn-primary {
+    background-color: var(--primary-color);
+    color: white;
+
+    &:hover {
+        background-color: var(--hover-color);
+    }
+}
+
+.btn-small {
+    padding: 0.25rem 0.5rem;
+    font-size: 0.75rem;
+}
+
+.btn-icon {
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    border-radius: 50%;
+    background: transparent;
+    border: none;
+
+    &:hover {
+        background: transparent;
+    }
+}
+
+/* Larger icon buttons inside track/playlist action rows */
+.track-actions .btn-icon,
+.playlist-item-actions .btn-icon {
+    width: 40px;
+    height: 40px;
+
+    svg {
+        width: 22px;
+        height: 22px;
+    }
+}
+
+.input,
+select,
+input[type="number"],
+input[type="text"] {
+    padding: 0.75rem;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    background: var(--surface-color);
+    color: var(--theme-text-color);
+    font-size: 0.875rem;
+    width: 100%;
+    transition: all 0.2s ease;
+    -webkit-appearance: none;
+    appearance: none;
+
+    &:focus {
+        outline: none;
+        border-color: var(--primary-color);
+        box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.2);
+    }
+
+    &::placeholder {
+        color: var(--placeholder-color);
+        opacity: 0.7;
+    }
+
+    &:disabled,
+    &[readonly] {
+        background: rgba(0, 0, 0, 0.2);
+        cursor: not-allowed;
+        opacity: 0.8;
+    }
+}
+
+/* Custom Select Arrow */
+select {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 0.75rem center;
+    background-size: 1rem;
+    padding-right: 2.5rem;
+    cursor: pointer;
+}
+
+/* Color Picker Styling */
+input[type="color"] {
+    -webkit-appearance: none;
+    appearance: none;
+    border: 1px solid var(--border-color);
+    width: 44px;
+    height: 44px;
+    padding: 0;
+    border-radius: 6px;
+    cursor: pointer;
+    background: var(--surface-color);
+
+    &::-webkit-color-swatch-wrapper {
+        padding: 4px;
+    }
+
+    &::-webkit-color-swatch {
+        border: none;
+        border-radius: 4px;
+    }
+}
+
+/* Slider Styles */
+.slider,
+input[type="range"] {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 100%;
+    height: 20px;
+    /* Element height matches thumb + safe area */
+    background: transparent;
+    /* Element background transparent */
+    outline: none;
+    transition: all 0.2s ease;
+    border-radius: 2px;
+    position: relative;
+    margin: 4px 0;
+    display: flex;
+    align-items: center;
+
+    &::-webkit-slider-runnable-track {
+        width: 100%;
+        height: 4px;
+        background: var(--border-color);
+        border-radius: 2px;
+        border: none;
+    }
+
+    &::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        appearance: none;
+        width: 16px;
+        height: 16px;
+        border-radius: 50%;
+        background: var(--slider-handle-color);
+        cursor: pointer;
+        transition: all 0.2s ease;
+        margin-top: -6px;
+        /* (4px track - 16px thumb) / 2 */
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+        border: none;
+
+        &:hover {
+            background: var(--primary-color);
+            transform: scale(1.1);
+        }
+    }
+
+    &::-moz-range-track {
+        width: 100%;
+        height: 4px;
+        background: var(--border-color);
+        border-radius: 2px;
+    }
+
+    &::-moz-range-thumb {
+        width: 16px;
+        height: 16px;
+        border-radius: 50%;
+        background: var(--slider-handle-color);
+        cursor: pointer;
+        transition: all 0.2s ease;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+        border: none;
+
+        &:hover {
+            background: var(--primary-color);
+        }
+    }
+}
+
+#download-btn {
+    min-width: 100px;
+    transition: all 0.2s ease;
+    white-space: nowrap;
+
+    &:disabled {
+        background-color: #4b5563 !important;
+        color: #6b7280 !important;
+        border-color: #374151 !important;
+        opacity: 0.6 !important;
+        min-width: 160px !important;
+        font-size: 0.85rem !important;
+    }
+}

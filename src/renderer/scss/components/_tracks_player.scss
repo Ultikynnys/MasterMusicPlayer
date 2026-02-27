@@ -1,0 +1,324 @@
+/* Track List & audio Player */
+.playlist-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1rem;
+    padding-bottom: 1rem;
+    border-bottom: 1px solid var(--border-color);
+
+    @media (max-aspect-ratio: 1/1) {
+        flex-direction: column;
+        align-items: center;
+        gap: 0.5rem;
+    }
+
+    h2 {
+        font-size: 1.5rem;
+        font-weight: 600;
+    }
+}
+
+.current-track-info {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    text-align: right;
+    min-width: 0;
+
+    @media (max-aspect-ratio: 1/1) {
+        display: none !important;
+    }
+
+    .track-title {
+        font-size: 1rem;
+        font-weight: 500;
+        line-height: 1.2;
+    }
+
+    .track-artist {
+        font-size: 0.875rem;
+        opacity: 0.7;
+        line-height: 1.2;
+    }
+}
+
+.tracks-container {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+}
+
+.drop-zone {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1rem;
+    border: 2px dashed var(--border-color);
+    border-radius: 8px;
+    background: var(--container-color);
+    margin-bottom: 0.5rem;
+    text-align: center;
+    min-height: 60px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+
+    &:hover {
+        border-color: var(--primary-color);
+        background: rgba(99, 102, 241, 0.05);
+    }
+
+    &.drag-over {
+        border-color: var(--primary-color);
+        background: rgba(99, 102, 241, 0.1);
+    }
+
+    p {
+        font-size: 1.1rem;
+        color: var(--adaptive-text-color, white);
+        opacity: 0.7;
+    }
+}
+
+.track-item {
+    display: flex;
+    align-items: center;
+    background: color-mix(in srgb, var(--secondary-color) 75%, transparent);
+    border: 2px solid color-mix(in srgb, var(--border-color) 75%, transparent);
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    min-height: 56px;
+    margin-bottom: 8px;
+
+    &:hover {
+        box-shadow: 0 0 0 2px var(--primary-color);
+    }
+
+    &.playing {
+        background: color-mix(in srgb, var(--primary-color) 75%, transparent);
+        border-color: color-mix(in srgb, var(--primary-color) 75%, transparent);
+    }
+
+    &.dragging {
+        opacity: 0.5;
+        border: 2px dashed var(--primary-color);
+    }
+
+    .drag-handle {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0 1.25rem;
+        align-self: stretch;
+        cursor: grab;
+        color: var(--adaptive-text-color, white);
+        opacity: 0.5;
+        transition: all 0.2s ease;
+        border-right: 1px solid transparent;
+
+        &:hover {
+            opacity: 1;
+            background: rgba(255, 255, 255, 0.05);
+            border-right: 1px solid var(--border-color);
+        }
+
+        &:active {
+            cursor: grabbing;
+        }
+
+        svg {
+            width: 18px;
+            height: 18px;
+        }
+    }
+
+    .track-info {
+        flex-grow: 1;
+        display: flex;
+        flex-direction: column;
+        padding: 1rem;
+        min-width: 0;
+
+        .track-title {
+            font-size: 1rem;
+            font-weight: 500;
+            word-break: break-word;
+        }
+
+        .track-details {
+            display: flex;
+            gap: 1rem;
+            font-size: 0.875rem;
+            opacity: 0.7;
+        }
+    }
+
+    .track-actions {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        padding-right: 1rem;
+
+        .track-volume-control {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            transition: all 0.2s ease;
+
+            .track-volume-icon {
+                display: flex;
+                align-items: center;
+                opacity: 0.8;
+                color: var(--theme-text-color);
+
+                svg {
+                    width: 16px;
+                    height: 16px;
+                }
+            }
+
+            .track-volume-slider {
+                width: 60px;
+                margin: 0;
+                cursor: pointer;
+
+                @media (max-width: 600px) {
+                    width: 40px;
+                }
+            }
+        }
+    }
+}
+
+/* audio Player */
+.audio-player {
+    background: var(--surface-color);
+    border-top: 2px solid var(--border-color);
+    padding: 1rem 2rem;
+    display: flex;
+    align-items: center;
+    gap: 2rem;
+    position: relative;
+    z-index: 1;
+
+    @media (max-aspect-ratio: 1/1) {
+        flex-direction: column !important;
+        padding: 0.75rem;
+        gap: 0.75rem;
+    }
+
+    .player-info {
+        flex: 1;
+        min-width: 0;
+    }
+
+    .player-controls {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 1.25rem;
+        flex: 1.5;
+
+        .player-control {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s ease;
+            color: var(--theme-text-color);
+            opacity: 0.8;
+
+            &:hover {
+                opacity: 1;
+                transform: scale(1.1);
+            }
+
+            &:active {
+                transform: scale(0.95);
+            }
+
+            &.active {
+                color: var(--primary-color);
+                opacity: 1;
+            }
+
+            svg {
+                display: block;
+                /* Remove baseline gap */
+            }
+        }
+
+        #play-pause-btn {
+            background: transparent;
+            color: var(--theme-text-color);
+            opacity: 0.8;
+
+            &:hover {
+                background: transparent;
+                box-shadow: none;
+                color: var(--primary-color);
+            }
+
+            svg {
+                width: 28px;
+                /* Slightly larger icon, but no background circle */
+                height: 28px;
+            }
+        }
+    }
+
+    .player-progress {
+        flex: 4;
+        /* Increase flex from 3 to 4 to give more space for the timeline */
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+        padding: 0 1rem;
+
+        @media (max-aspect-ratio: 1/1) {
+            width: 100%;
+            padding: 0;
+        }
+
+        #current-time,
+        #total-time {
+            font-size: 0.8rem;
+            opacity: 0.7;
+            font-family: 'JetBrains Mono', 'Roboto Mono', monospace;
+            /* Monospace for stable counters */
+            min-width: 45px;
+            text-align: center;
+        }
+
+        .progress-container {
+            flex: 1;
+            /* Stretch to fill space */
+            display: flex;
+            align-items: center;
+            height: 20px;
+            /* Match slider height */
+
+            #progress-slider {
+                width: 100%;
+                margin: 0;
+            }
+        }
+    }
+
+    .player-volume {
+        flex: 1;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+
+        @media (max-aspect-ratio: 1/1) {
+            width: 100%;
+            justify-content: center;
+        }
+    }
+}
+
+.visualizer-container {
+    display: none;
+}

@@ -1,0 +1,118 @@
+/* Header Component */
+.header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1rem;
+    background-color: var(--surface-color);
+    border-bottom: 2px solid var(--border-color);
+    -webkit-app-region: drag;
+    min-height: 60px;
+
+    @media (max-aspect-ratio: 1/1) {
+        padding: 0.5rem 1rem;
+        min-height: 50px;
+    }
+
+    .header-left {
+        flex: 0 0 auto;
+        display: flex;
+        align-items: center;
+        justify-content: flex-start;
+        -webkit-app-region: no-drag;
+        height: 40px;
+
+        .banner-image {
+            height: 40px;
+            width: auto;
+        }
+
+        @media (max-aspect-ratio: 1/1) {
+            flex: 1;
+            justify-content: center;
+        }
+    }
+
+    h1 {
+        font-size: 1.5rem;
+        font-weight: 600;
+        color: var(--adaptive-text-color);
+    }
+
+    .download-controls {
+        flex: 1;
+        display: flex;
+        justify-content: flex-start;
+        align-items: center;
+        gap: 0.5rem;
+        -webkit-app-region: no-drag;
+        height: 40px;
+        margin-left: 0.25rem;
+        margin-right: 0.25rem;
+
+        @media (max-aspect-ratio: 1/1) {
+            display: none !important;
+        }
+
+        .input {
+            flex: 1;
+            min-width: 200px;
+            max-width: none;
+            width: 0;
+            font-size: 0.9rem;
+            height: 36px;
+        }
+
+        .btn {
+            height: 36px;
+        }
+    }
+
+    .header-right {
+        flex: 0 0 auto;
+        display: flex;
+        justify-content: flex-end;
+        align-items: center;
+        gap: 0.5rem;
+        -webkit-app-region: no-drag;
+        height: 40px;
+
+        @media (max-aspect-ratio: 1/1) {
+            display: none !important;
+        }
+    }
+}
+
+.btn-support {
+    background: linear-gradient(135deg, #ff6b6b, #ee5a24);
+    border: none;
+    color: white;
+    transition: all 0.3s ease;
+
+    &:hover {
+        background: linear-gradient(135deg, #ee5a24, #ff6b6b);
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(255, 107, 107, 0.4);
+    }
+}
+
+.btn-kofi {
+    background: transparent;
+    border: none;
+    padding: 0;
+    transition: all 0.3s ease;
+    border-radius: 0;
+    overflow: visible;
+    outline: none;
+
+    &:hover {
+        transform: translateY(-2px);
+        filter: drop-shadow(0 4px 8px rgba(255, 95, 95, 0.3));
+    }
+}
+
+.kofi-image {
+    height: 36px;
+    width: auto;
+    display: block;
+}

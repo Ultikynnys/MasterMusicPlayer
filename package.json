@@ -5,8 +5,9 @@
   "main": "src/main.js",
   "scripts": {
     "start": "electron .",
-    "dev": "electron . --dev",
-    "prebuild": "node scripts/optimize-build.js",
+    "dev": "concurrently \"npm run scss:watch\" \"electron . --dev\"",
+    "scss:watch": "sass --watch src/renderer/scss/main.scss:src/renderer/styles.css src/renderer/scss/broadcast.scss:src/utils/broadcast.css",
+    "prebuild": "sass src/renderer/scss/main.scss:src/renderer/styles.css src/renderer/scss/broadcast.scss:src/utils/broadcast.css && node scripts/optimize-build.js",
     "prepackage": "node scripts/pre-package.js",
     "build": "electron-builder",
     "build-linux": "electron-builder --linux",
@@ -24,9 +25,11 @@
   "author": "Ultikynnys",
   "license": "MIT",
   "devDependencies": {
+    "concurrently": "^9.2.1",
     "electron": "^37.2.3",
     "electron-builder": "^24.6.4",
-    "glob": "^10.3.10"
+    "glob": "^10.3.10",
+    "sass": "^1.97.3"
   },
   "dependencies": {
     "archiver": "^7.0.1",

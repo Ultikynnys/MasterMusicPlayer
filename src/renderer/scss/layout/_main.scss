@@ -1,0 +1,83 @@
+/* Main App Layout */
+#app {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    position: relative;
+}
+
+.main-content {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+}
+
+.sidebar {
+    width: 300px;
+    background: var(--surface-color);
+    border-right: 2px solid var(--border-color);
+    padding-left: 1rem;
+    padding-right: 1rem;
+    overflow-y: hidden;
+    display: flex;
+    flex-direction: column;
+
+    @media (max-width: 768px) {
+        width: 250px;
+    }
+
+    @media (max-aspect-ratio: 1/1) {
+        display: none !important;
+    }
+}
+
+.sidebar-section {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow-y: hidden;
+
+    h3 {
+        font-size: 1.1rem;
+        font-weight: 600;
+        margin-bottom: 1rem;
+        color: var(--adaptive-text-color, white);
+        user-select: none;
+    }
+}
+
+.content {
+    flex: 1;
+    padding: 1rem;
+    overflow-y: auto;
+    position: relative;
+    padding: 2px;
+
+    @media (max-aspect-ratio: 1/1) {
+        margin-left: 0;
+    }
+}
+
+.playlist-view {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    position: relative;
+    z-index: 1;
+    padding: 1em;
+}
+
+.background-visualizer {
+    position: fixed;
+    top: 70px;
+    left: 300px;
+    right: 0;
+    bottom: 0;
+    pointer-events: none;
+    z-index: 0;
+    opacity: 0.6;
+
+    @media (max-aspect-ratio: 1/1) {
+        left: 0;
+    }
+}

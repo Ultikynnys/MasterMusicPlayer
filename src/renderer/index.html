@@ -5,7 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta http-equiv="Content-Security-Policy"
-        content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: file:; media-src 'self' file:; font-src 'self';">
+        content="default-src 'self'; script-src 'self' 'unsafe-inline'; worker-src blob: 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: file:; media-src 'self' file:; font-src 'self';">
     <title>Master Music Player</title>
     <link rel="stylesheet" href="styles.css">
 </head>
@@ -35,7 +35,7 @@
                 <button id="kofi-btn" class="btn btn-kofi" title="Support on Ko-fi">
                     <img src="assets/support_me_on_kofi_dark.png" alt="Support me on Ko-fi" class="kofi-image">
                 </button>
-                <button id="github-btn" class="btn btn-icon btn-support" title="View on GitHub">
+                <button id="github-btn" class="btn btn-icon btn-secondary" title="View on GitHub">
                     <img src="assets/github.svg" alt="GitHub" width="24" height="24">
                 </button>
                 <button id="theme-btn" class="btn btn-icon btn-secondary" title="Change Theme">
@@ -194,7 +194,14 @@
             <div class="modal-content">
                 <div class="modal-header">
                     <h3>Theme Settings</h3>
-                    <button class="modal-close">&times;</button>
+                    <button class="modal-close">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
+                            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                            class="feather feather-x">
+                            <line x1="18" y1="6" x2="6" y2="18"></line>
+                            <line x1="6" y1="6" x2="18" y2="18"></line>
+                        </svg>
+                    </button>
                 </div>
                 <div class="modal-body">
                     <div class="theme-controls">
@@ -228,7 +235,14 @@
             <div class="modal-content">
                 <div class="modal-header">
                     <h3>Settings</h3>
-                    <button class="modal-close">&times;</button>
+                    <button class="modal-close">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
+                            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                            class="feather feather-x">
+                            <line x1="18" y1="6" x2="6" y2="18"></line>
+                            <line x1="6" y1="6" x2="18" y2="18"></line>
+                        </svg>
+                    </button>
                 </div>
                 <div class="modal-body">
                     <div class="settings-grid">
@@ -254,9 +268,6 @@
                         </div>
                         <div class="version-info">
                             <label>Version: <span id="app-version">Loading...</span></label>
-                        </div>
-                        <div class="export-section">
-                            <button id="export-songs-btn" class="btn btn-secondary">Export All Songs</button>
                         </div>
 
                         <!-- Storage Location Section -->
@@ -304,20 +315,7 @@
                                 <input type="text" id="broadcast-public-host" placeholder="your-domain.com or public IP"
                                     data-config-path="broadcast.publicHost" data-default-value="">
                             </div>
-                            <div class="checkbox-control">
-                                <label>
-                                    <input type="checkbox" id="broadcast-require-token"
-                                        data-config-path="broadcast.requireToken" data-default-value="true"> Require
-                                    access token
-                                </label>
-                            </div>
-                            <div class="input-control">
-                                <label>Access Token:</label>
-                                <input type="text" id="broadcast-token" placeholder="Paste your token or leave blank"
-                                    data-config-path="broadcast.accessToken" data-default-value="">
-                            </div>
                             <div class="broadcast-controls">
-                                <button id="generate-token-btn" class="btn btn-secondary">Generate New Token</button>
                                 <button id="open-broadcast-btn" class="btn btn-secondary" disabled>Open Broadcast
                                     Page</button>
                             </div>
@@ -349,7 +347,14 @@
             <div class="modal-content">
                 <div class="modal-header">
                     <h3 id="playlist-modal-title">Create Playlist</h3>
-                    <button class="modal-close">&times;</button>
+                    <button class="modal-close">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
+                            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                            class="feather feather-x">
+                            <line x1="18" y1="6" x2="6" y2="18"></line>
+                            <line x1="6" y1="6" x2="18" y2="18"></line>
+                        </svg>
+                    </button>
                 </div>
                 <div class="modal-body">
                     <input type="text" id="playlist-name-input" placeholder="Playlist name" class="input">
@@ -366,7 +371,14 @@
             <div class="modal-content">
                 <div class="modal-header">
                     <h3 id="confirm-title">Confirm</h3>
-                    <button class="modal-close">&times;</button>
+                    <button class="modal-close">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
+                            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                            class="feather feather-x">
+                            <line x1="18" y1="6" x2="6" y2="18"></line>
+                            <line x1="6" y1="6" x2="18" y2="18"></line>
+                        </svg>
+                    </button>
                 </div>
                 <div class="modal-body">
                     <p id="confirm-message">Are you sure?</p>

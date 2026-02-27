@@ -1,6 +1,7 @@
-const { ipcRenderer } = require('electron');
+const { ipcRenderer, shell, webUtils } = require('electron');
 const path = require('path');
 const { generateSessionId } = require('../utils/idGenerator');
+const { lightenColor, getContrastColor, hexToRgb } = require('../utils/themeUtils');
 
 // Frontend logging utility
 class FrontendLogger {
@@ -168,16 +169,7 @@ ipcRenderer.on('broadcast-error', (_, data) => {
 });
 
 
-// Helper function to convert hex color to RGB
-function hexToRgb(hex) {
-  if (!hex) return { r: 0, g: 0, b: 0 };
-  const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
-  return result ? {
-    r: parseInt(result[1], 16),
-    g: parseInt(result[2], 16),
-    b: parseInt(result[3], 16)
-  } : { r: 0, g: 0, b: 0 };
-}
+// Helper function to convert hex color to RGB (moved to themeUtils)
 
 // Icon paths
 const REPEAT_ICON = './assets/Repeat.svg';
@@ -314,8 +306,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     broadcastHost: document.getElementById('broadcast-host'),
     broadcastPort: document.getElementById('broadcast-port'),
     broadcastPublicHost: document.getElementById('broadcast-public-host'),
-    broadcastRequireToken: document.getElementById('broadcast-require-token'),
-    generateTokenBtn: document.getElementById('generate-token-btn'),
     openBroadcastBtn: document.getElementById('open-broadcast-btn'),
     broadcastStatus: document.getElementById('broadcast-status'),
     shareableUrl: document.getElementById('shareable-url'),
@@ -837,14 +827,39 @@ function createPlaylistElement(playlist) {
     playlistEl.classList.add('active');
   }
 
-  const header = createDOMElement('div', 'playlist-item-header');
+  // Top Section: Two Columns
+  const topSection = createDOMElement('div', 'playlist-item-top');
+
+  // Column 1: Info (Name & Meta)
+  const infoCol = createDOMElement('div', 'playlist-info-col');
   const name = createDOMElement('span', 'playlist-name', {}, playlist.name);
-  const actions = createDOMElement('div', 'playlist-item-actions');
+  const trackCount = createDOMElement('div', 'playlist-track-count', {}, formatPlaylistInfo(playlist));
+  infoCol.append(name, trackCount);
+
+  // Column 2: Icon (Image)
+  const iconCol = createDOMElement('div', 'playlist-icon-col');
+  const icon = createDOMElement('img', 'playlist-icon');
+  if (playlist.iconPath) {
+    icon.src = `file://${playlist.iconPath}`;
+  } else {
+    // Fallback placeholder or keep empty
+    icon.src = './assets/MMP_Logo.png';
+    icon.classList.add('placeholder');
+  }
+  iconCol.append(icon);
+
+  topSection.append(infoCol, iconCol);
+
+  // Bottom Section: Actions row
+  const actionsRow = createDOMElement('div', 'playlist-actions-row');
 
   const renameButton = createDOMElement('button', 'btn btn-small btn-icon btn-primary');
   renameButton.title = 'Rename Playlist';
   renameButton.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-edit-2 icon-white"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path></svg>`;
-  renameButton.onclick = () => renamePlaylist(playlist.id);
+  renameButton.onclick = (e) => {
+    e.stopPropagation();
+    renamePlaylist(playlist.id);
+  };
 
   const deleteButton = createDOMElement('button', 'btn btn-small btn-icon btn-secondary');
   deleteButton.title = 'Delete Playlist';
@@ -869,12 +884,9 @@ function createPlaylistElement(playlist) {
     }
   };
 
-  actions.append(downloadButton, renameButton, deleteButton);
-  header.append(name, actions);
+  actionsRow.append(downloadButton, renameButton, deleteButton);
 
-  const trackCount = createDOMElement('div', 'playlist-track-count', {}, formatPlaylistInfo(playlist));
-
-  playlistEl.append(header, trackCount);
+  playlistEl.append(topSection, actionsRow);
 
   playlistEl.addEventListener('click', (e) => {
     if (!e.target.closest('button')) {
@@ -884,7 +896,45 @@ function createPlaylistElement(playlist) {
   });
 
   playlistEl.addEventListener('dragover', handleDragOver);
-  playlistEl.addEventListener('drop', (e) => handleTrackDrop(e, playlist.id));
+  playlistEl.addEventListener('drop', async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    // Check for images first
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      const file = e.dataTransfer.files[0];
+      if (file.type.startsWith('image/')) {
+        try {
+          let actualPath = file.path;
+          if (!actualPath && webUtils && webUtils.getPathForFile) {
+            actualPath = webUtils.getPathForFile(file);
+          }
+
+          if (!actualPath) {
+            throw new Error('Image file path could not be extracted.');
+          }
+
+          const relativeIconPath = await ipcRenderer.invoke('copy-playlist-icon', {
+            playlistId: playlist.id,
+            filePath: actualPath
+          });
+
+          playlist.iconPath = relativeIconPath;
+          await ipcRenderer.invoke('update-playlist', playlist);
+          await loadPlaylists(); // Refresh UI
+
+          frontendLogger.info('Playlist icon updated', { playlistId: playlist.id, path: relativeIconPath });
+        } catch (err) {
+          frontendLogger.error('Error handling image drop', err);
+          showErrorNotification('Upload Error', err.message || 'Failed to update playlist icon.');
+        }
+        return;
+      }
+    }
+
+    // Otherwise handle as track reordering
+    handleTrackDrop(e, playlist.id);
+  });
 
   return playlistEl;
 }
@@ -1739,21 +1789,7 @@ function setupEventListeners() {
   setupExternalLink('github-btn', 'https://github.com/Ultikynnys/MasterMusicPlayer', 'github');
 
   // Broadcast controls
-  if (elements.generateTokenBtn) {
-    elements.generateTokenBtn.addEventListener('click', async () => {
-      try {
-        const result = await ipcRenderer.invoke('generate-broadcast-token');
-        if (result.success) {
-          elements.shareableUrl.value = result.url;
-          showSuccessNotification('New access token generated successfully');
-          frontendLogger.userAction('broadcast-token-generated');
-        }
-      } catch (error) {
-        frontendLogger.error('Failed to generate broadcast token', error);
-        showErrorNotification('Failed to generate token', error.message);
-      }
-    });
-  }
+  // Removed token generation buttons
 
   if (elements.openBroadcastBtn) {
     elements.openBroadcastBtn.addEventListener('click', async () => {
@@ -2156,61 +2192,7 @@ function formatPlaylistInfo(playlist) {
   return `${trackCount} ${trackText} • ${formatTime(totalDuration)}`;
 }
 
-function lightenColor(color, percent) {
-  const hex = color.replace('#', '');
-  const r = parseInt(hex.substr(0, 2), 16);
-  const g = parseInt(hex.substr(2, 2), 16);
-  const b = parseInt(hex.substr(4, 2), 16);
-
-  let newR, newG, newB;
-
-  if (percent > 0) {
-    // Lighten
-    newR = Math.min(255, Math.floor(r + (255 - r) * (percent / 100)));
-    newG = Math.min(255, Math.floor(g + (255 - g) * (percent / 100)));
-    newB = Math.min(255, Math.floor(b + (255 - b) * (percent / 100)));
-  } else {
-    // Darken
-    const factor = (100 + percent) / 100;
-    newR = Math.max(0, Math.floor(r * factor));
-    newG = Math.max(0, Math.floor(g * factor));
-    newB = Math.max(0, Math.floor(b * factor));
-  }
-
-  return `#${newR.toString(16).padStart(2, '0')}${newG.toString(16).padStart(2, '0')}${newB.toString(16).padStart(2, '0')}`;
-}
-
-function getContrastColor(backgroundColor) {
-  // Calculate luminance of background color
-  const hex = backgroundColor.replace('#', '');
-  const r = parseInt(hex.substr(0, 2), 16) / 255;
-  const g = parseInt(hex.substr(2, 2), 16) / 255;
-  const b = parseInt(hex.substr(4, 2), 16) / 255;
-
-  // Convert to linear RGB
-  const toLinear = (c) => c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
-  const rLinear = toLinear(r);
-  const gLinear = toLinear(g);
-  const bLinear = toLinear(b);
-
-  // Calculate luminance
-  const luminance = 0.2126 * rLinear + 0.7152 * gLinear + 0.0722 * bLinear;
-
-  // Return appropriate text color and shadow
-  if (luminance > 0.5) {
-    // Light background - use dark text
-    return {
-      color: '#1f2937',
-      textShadow: '1px 1px 2px rgba(255, 255, 255, 0.8)'
-    };
-  } else {
-    // Dark background - use light text
-    return {
-      color: 'white',
-      textShadow: '1px 1px 2px rgba(0, 0, 0, 0.8)'
-    };
-  }
-}
+// Shared color utilities (lightenColor, getContrastColor) moved to themeUtils
 
 function showModal(modalId) {
   const modalEl = document.getElementById(modalId);
@@ -2406,7 +2388,7 @@ async function savePlaylistName() {
     hideModal('playlist-name-modal');
   } catch (error) {
     frontendLogger.error('Error saving playlist:', error);
-    showErrorNotification('Playlist Error', 'Failed to save playlist name.');
+    showErrorNotification('Playlist Error', `Failed to save playlist name: ${error.message}`);
   }
 }
 
@@ -2797,9 +2779,7 @@ async function saveBroadcastSettings() {
       enabled: elements.broadcastEnabled?.checked || false,
       host: elements.broadcastHost?.value || '127.0.0.1',
       port: parseInt(elements.broadcastPort?.value) || 4583,
-      publicHost: elements.broadcastPublicHost?.value || '',
-      requireToken: elements.broadcastRequireToken?.checked !== false,
-      accessToken: appConfig.broadcast?.accessToken || ''
+      publicHost: elements.broadcastPublicHost?.value || ''
     };
 
     const result = await ipcRenderer.invoke('update-broadcast-config', broadcastConfig);
@@ -2829,7 +2809,6 @@ async function updateBroadcastUI() {
       if (elements.broadcastHost) elements.broadcastHost.value = status.config.host;
       if (elements.broadcastPort) elements.broadcastPort.value = status.config.port;
       if (elements.broadcastPublicHost) elements.broadcastPublicHost.value = status.config.publicHost || '';
-      if (elements.broadcastRequireToken) elements.broadcastRequireToken.checked = status.config.requireToken;
     }
   } catch (error) {
     frontendLogger.error('Failed to update broadcast UI', error);
@@ -3210,18 +3189,24 @@ function setupErrorHandlers() {
       src: src
     });
 
-    // Don't remove tracks automatically - just skip to next track
-    frontendLogger.warn(`Skipping problematic track: ${currentTrack.name} (track preserved in playlist)`);
+    // Automatic track disposal for missing files
+    const trackToRemove = currentTrack;
+    frontendLogger.warn(`Removing problematic track: ${trackToRemove.name} (file likely missing or corrupt)`);
 
-    // Set failed attempt timestamp for cooldown logic
-    if (lastPlayedTrack === currentTrack.id) {
-      lastFailedAttemptTime = Date.now();
-    }
+    // Flag that we are intentionally removing a track to avoid overlapping playback commands
+    const trackIdToRemove = trackToRemove.id;
 
-    // Continue playback without removing the track
+    // Use the existing removal logic which handles stopping and UI updates
+    await removeTrackFromCurrentPlaylist(trackIdToRemove);
+
+    // Continue playback to the next available track
     if (currentPlaylist && currentPlaylist.tracks.length > 0) {
-      setTimeout(() => playNext(), 100); // Small delay to avoid rapid loops
+      setTimeout(() => {
+        errorHandlingInProgress = false;
+        playNext();
+      }, 500); // Increased delay to ensure clean state transition
     } else {
+      errorHandlingInProgress = false;
       resetPlayerUI();
     }
   }
@@ -3472,45 +3457,4 @@ ipcRenderer.on('tracks-downloaded', (event, { playlistId, newTracks }) => {
   }
 });
 
-// Export all songs functionality
-async function exportAllSongs() {
-  try {
-    frontendLogger.info('Export all songs requested');
-
-    // Show loading state
-    showLoading('Preparing export...');
-
-    // Call the main process to handle the export
-    const result = await ipcRenderer.invoke('export-all-songs');
-
-    hideLoading();
-
-    if (result.success) {
-      showSuccessNotification('Export Complete', result.message);
-      frontendLogger.info('Export completed successfully', {
-        total: result.total,
-        copied: result.copied,
-        failed: result.failed,
-        exportPath: result.exportPath
-      });
-    } else {
-      showErrorNotification('Export Failed', result.message);
-      frontendLogger.warn('Export failed', { message: result.message });
-    }
-  } catch (error) {
-    hideLoading();
-    frontendLogger.error('Export error', error);
-    showErrorNotification('Export Error', 'An error occurred during export. Please try again.');
-  }
-}
-
-// Set up export button event listener when DOM is ready
-document.addEventListener('DOMContentLoaded', () => {
-  const exportButton = document.getElementById('export-songs-btn');
-  if (exportButton) {
-    exportButton.addEventListener('click', exportAllSongs);
-    frontendLogger.info('Export button event listener added');
-  } else {
-    frontendLogger.warn('Export button not found in DOM');
-  }
-});
+// (Export all songs functionality removed)

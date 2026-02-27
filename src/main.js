@@ -115,15 +115,7 @@ async function initializeBroadcastServer() {
     // Load and apply initial config
     const appConfig = await loadAppConfig();
     if (appConfig.broadcast) {
-      // Keep previous token to detect if server generated a new one
-      const prevToken = appConfig.broadcast.accessToken || '';
-      const updated = broadcastServer.updateConfig(appConfig.broadcast);
-      // If a new token was generated (because it was missing), persist it immediately
-      if (updated && updated.requireToken && updated.accessToken && updated.accessToken !== prevToken) {
-        appConfig.broadcast = updated;
-        await saveAppConfig(appConfig);
-        logger.info('Persisted broadcast access token to app config');
-      }
+      broadcastServer.updateConfig(appConfig.broadcast);
     }
 
     // Load and apply theme config
@@ -155,10 +147,13 @@ async function cleanupBroadcastServer() {
 // Determine a writable directory for app data. When running from a packaged asar, __dirname is inside a read-only archive,
 // so we fall back to Electron's recommended userData path. We defer initialisation until `app` is ready.
 // Provide sensible defaults so code that runs before `app.whenReady()` doesn't crash when referencing these paths.
-let appDataPath = path.join(__dirname, '..', 'data');
+// provide safe, writable defaults for everything
+let appDataPath = path.join(app.getPath('userData'), 'data');
 let songsPath = path.join(appDataPath, 'songs');
 let playlistsPath = path.join(appDataPath, 'playlists');
+let iconsPath = path.join(appDataPath, 'icons');
 let configPath = path.join(appDataPath, 'config');
+let appConfigPath = path.join(configPath, 'app.json');
 
 async function initialisePaths() {
   let baseDataPath;
@@ -198,6 +193,7 @@ async function initialisePaths() {
 
   songsPath = path.join(appDataPath, 'songs');
   playlistsPath = path.join(appDataPath, 'playlists');
+  iconsPath = path.join(appDataPath, 'icons');
   configPath = path.join(appDataPath, 'config');
   appConfigPath = path.join(configPath, 'app.json');
 }
@@ -211,6 +207,20 @@ async function initialisePaths() {
 function toRelativePath(absPath) {
   try {
     if (!absPath) return absPath;
+
+    // If it's already relative (doesn't start with a drive letter or /), keep it
+    if (!path.isAbsolute(absPath)) {
+      return absPath;
+    }
+
+    // Heuristics: all tracks are in `songs/` folder locally.
+    const songsFolderMatch = `${path.sep}songs${path.sep}`;
+    const songsIndex = absPath.indexOf(songsFolderMatch);
+    if (songsIndex !== -1) {
+      // Force rewrite to standard relative 'songs/Filename.ext'
+      return path.join('songs', absPath.slice(songsIndex + songsFolderMatch.length));
+    }
+
     return path.relative(appDataPath, absPath);
   } catch (err) {
     logger.error('Error converting to relative path', err, { absPath });
@@ -229,13 +239,12 @@ function toAbsolutePath(relOrAbs) {
 }
 
 // App configuration management
-let appConfigPath;
-
 async function createDataDirectories() {
   try {
     await fs.ensureDir(appDataPath);
     await fs.ensureDir(songsPath);
     await fs.ensureDir(playlistsPath);
+    await fs.ensureDir(iconsPath);
     await fs.ensureDir(configPath);
     logger.info('Data directories created or verified');
   } catch (error) {
@@ -266,8 +275,6 @@ const defaultAppConfig = {
     host: '127.0.0.1',
     port: 4583,
     publicHost: '',
-    requireToken: true,
-    accessToken: ''
   }
 };
 
@@ -501,26 +508,29 @@ ipcMain.handle('get-playlists', async () => {
 
     for (const file of files) {
       if (file.endsWith('.json')) {
-        const playlistData = await fs.readJson(path.join(playlistsPath, file));
-        // Convert relative paths to absolute for renderer
-        if (playlistData.tracks && Array.isArray(playlistData.tracks)) {
-          logger.info(`Processing ${playlistData.tracks.length} tracks for playlist ${playlistData.name}`);
-          playlistData.tracks = playlistData.tracks
-            .filter(t => {
-              if (!t || !t.filePath) {
-                logger.warn('Filtering out invalid track:', t);
-                return false;
-              }
-              return true;
-            })
-            .map(t => {
-              const originalPath = t.filePath;
-              const absolutePath = toAbsolutePath(t.filePath);
-              logger.info(`Path conversion: ${originalPath} -> ${absolutePath}`);
-              return { ...t, filePath: absolutePath };
-            });
+        try {
+          const playlistData = await fs.readJson(path.join(playlistsPath, file));
+          // Convert relative paths to absolute for renderer
+          if (playlistData.tracks && Array.isArray(playlistData.tracks)) {
+            playlistData.tracks = playlistData.tracks
+              .filter(t => t && t.filePath)
+              .map(t => {
+                const relativePath = toRelativePath(t.filePath);
+                const absolutePath = toAbsolutePath(relativePath);
+                return { ...t, filePath: absolutePath };
+              });
+          }
+
+          // Handle playlist icon path
+          if (playlistData.iconPath) {
+            playlistData.iconPath = toAbsolutePath(playlistData.iconPath);
+          }
+
+          playlists.push(playlistData);
+        } catch (readErr) {
+          logger.error(`Error reading playlist file: ${file}`, readErr);
+          // If the file is corrupted, we might want to skip it or notify the user
         }
-        playlists.push(playlistData);
       }
     }
 
@@ -531,10 +541,55 @@ ipcMain.handle('get-playlists', async () => {
   }
 });
 
+withErrorHandling('prune-playlist', async (event, playlistId) => {
+  const startTime = Date.now();
+  try {
+    logger.userAction('prune-playlist-requested', { playlistId });
+    const playlistFile = path.join(playlistsPath, `${playlistId}.json`);
+
+    if (!await fs.pathExists(playlistFile)) {
+      throw new Error('Playlist file does not exist');
+    }
+
+    const playlist = await fs.readJson(playlistFile);
+    if (!playlist.tracks || !Array.isArray(playlist.tracks)) {
+      return playlist;
+    }
+
+    const originalCount = playlist.tracks.length;
+    const existingTracks = [];
+
+    for (const track of playlist.tracks) {
+      const absPath = toAbsolutePath(track.filePath);
+      if (await fs.pathExists(absPath)) {
+        existingTracks.push(track);
+      }
+    }
+
+    if (existingTracks.length !== originalCount) {
+      playlist.tracks = existingTracks;
+      await fs.writeJson(playlistFile, playlist, { spaces: 2 });
+      logger.info('Playlist pruned successfully', {
+        playlistId,
+        removed: originalCount - existingTracks.length
+      });
+    }
+
+    return playlist;
+  } catch (error) {
+    logger.error('Error pruning playlist', error, { playlistId });
+    throw error;
+  }
+});
+
 withErrorHandling('create-playlist', async (event, name) => {
   const startTime = Date.now();
   try {
     logger.userAction('create-playlist-requested', { name });
+
+    // Safety check: ensure the parent directory exists and is writable
+    await fs.ensureDir(playlistsPath);
+
     const playlist = {
       id: uuidv4(),
       name: name,
@@ -542,12 +597,16 @@ withErrorHandling('create-playlist', async (event, name) => {
       createdAt: new Date().toISOString()
     };
 
-    await fs.writeJson(path.join(playlistsPath, `${playlist.id}.json`), playlist);
+    const playlistFilePath = path.join(playlistsPath, `${playlist.id}.json`);
+    logger.info('Creating playlist file', { path: playlistFilePath });
+
+    await fs.writeJson(playlistFilePath, playlist, { spaces: 2 });
     logger.info('Playlist created successfully', { playlistId: playlist.id, name });
     return playlist;
   } catch (error) {
-    logger.error('Error creating playlist', error, { name });
-    throw error;
+    logger.error('Error creating playlist', error, { name, playlistsPath });
+    // Rethrow with better message for the user
+    throw new Error(`Could not create playlist: ${error.message} (Target: ${playlistsPath})`);
   }
 });
 
@@ -555,7 +614,23 @@ withErrorHandling('update-playlist', async (event, playlist) => {
   const startTime = Date.now();
   try {
     logger.userAction('update-playlist-requested', { playlistId: playlist.id, name: playlist.name, trackCount: playlist.tracks.length });
-    await fs.writeJson(path.join(playlistsPath, `${playlist.id}.json`), playlist);
+
+    // Ensure all tracks are saved with true relative paths rather than
+    // leaking absolute paths back into the file which breaks data portability.
+    if (playlist.tracks && Array.isArray(playlist.tracks)) {
+      playlist.tracks = playlist.tracks.map(t => ({
+        ...t,
+        filePath: toRelativePath(t.filePath)
+      }));
+    }
+
+    // Convert iconPath to relative for storage
+    const storagePlaylist = { ...playlist };
+    if (storagePlaylist.iconPath) {
+      storagePlaylist.iconPath = toRelativePath(storagePlaylist.iconPath);
+    }
+
+    await fs.writeJson(path.join(playlistsPath, `${playlist.id}.json`), storagePlaylist, { spaces: 2 });
     return playlist;
   } catch (error) {
     logger.error('Error updating playlist', error, { playlistId: playlist.id });
@@ -725,6 +800,25 @@ withErrorHandling('update-theme-config', async (event, theme) => {
   return { success: true };
 });
 
+withErrorHandling('copy-playlist-icon', async (event, { playlistId, filePath }) => {
+  const startTime = Date.now();
+  try {
+    logger.info('Copying playlist icon', { playlistId, filePath });
+    const ext = path.extname(filePath);
+    const fileName = `${playlistId}${ext}`;
+    const destPath = path.join(iconsPath, fileName);
+
+    await fs.copy(filePath, destPath);
+    logger.info('Icon copied successfully', { destPath });
+
+    // Return the relative path for the renderer
+    return toRelativePath(destPath);
+  } catch (error) {
+    logger.error('Error copying playlist icon', error, { playlistId, filePath });
+    throw error;
+  }
+});
+
 // IPC handlers for broadcast functionality
 withErrorHandling('update-broadcast-config', async (event, config) => {
   if (!broadcastServer) {
@@ -754,22 +848,7 @@ withErrorHandling('get-broadcast-status', async () => {
   };
 });
 
-withErrorHandling('generate-broadcast-token', async () => {
-  if (!broadcastServer) {
-    throw new Error('Broadcast server not initialized');
-  }
-
-  const newToken = broadcastServer.generateAccessToken();
-  const updatedConfig = broadcastServer.updateConfig({ accessToken: newToken });
-
-  // Save to app config
-  const appConfig = await loadAppConfig();
-  appConfig.broadcast = updatedConfig;
-  await saveAppConfig(appConfig);
-
-  logger.info('New broadcast token generated');
-  return { success: true, token: newToken, url: broadcastServer.getShareableUrl() };
-});
+// Token generation handler removed
 
 withErrorHandling('update-broadcast-state', async (event, state) => {
   if (!broadcastServer) {
