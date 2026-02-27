@@ -207,6 +207,7 @@ function setPipelineGain(v) {
 
 // Global state
 let currentPlaylist = null;
+let playingPlaylist = null;
 let currentTrack = null;
 let currentTrackIndex = -1;
 let isPlaying = false;
@@ -272,6 +273,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Visualizer
     visualizer: document.getElementById('visualizer'),
     backgroundVisualizer: document.getElementById('background-visualizer'),
+    backgroundAlbumCover: document.getElementById('background-album-cover'),
 
     // Modals
     themeModal: document.getElementById('theme-modal'),
@@ -293,6 +295,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Settings controls
     settingsBtn: document.getElementById('settings-btn'),
     visualizerEnabled: document.getElementById('visualizer-enabled'),
+    backgroundAlbumCoverEnabled: document.getElementById('background-album-cover-enabled'),
     saveRepeatState: document.getElementById('save-repeat-state'),
     saveTrackTime: document.getElementById('save-track-time'),
 
@@ -1157,9 +1160,10 @@ let playbackAttempts = 0;
 let lastFailedAttemptTime = 0;
 const RETRY_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes cooldown before retrying failed tracks
 
-async function playTrack(track, index) {
+async function playTrack(track, index, sourcePlaylist = currentPlaylist) {
   frontendLogger.info('playTrack', { trackId: track ? track.id : null, index });
   const startTime = Date.now();
+  playingPlaylist = sourcePlaylist;
 
   // Prevent infinite loops - if same track fails repeatedly, skip it temporarily
   if (lastPlayedTrack === track.id) {
@@ -1211,6 +1215,18 @@ async function playTrack(track, index) {
 
     currentTrack = track;
     currentTrackIndex = index;
+
+    if (elements.backgroundAlbumCover) {
+      if (track.thumbnail) {
+        elements.backgroundAlbumCover.src = track.thumbnail;
+        const bgEnabled = appConfig.visualizer?.backgroundAlbumCover ?? false;
+        elements.backgroundAlbumCover.style.display = bgEnabled ? 'block' : 'none';
+      } else {
+        elements.backgroundAlbumCover.src = '';
+        elements.backgroundAlbumCover.style.display = 'none';
+      }
+    }
+
     // Immediately publish new track state to broadcast server
     try { updateBroadcastState(); } catch (err) {
       frontendLogger.warn('Failed to broadcast track state before playback start', err);
@@ -1602,6 +1618,7 @@ function setupBackgroundVisualizer() {
     const barWidth = (canvas.width / dataArray.length) * 3;
     let barHeight;
     let x = 0;
+    let totalIntensity = 0;
 
     for (let i = 0; i < dataArray.length; i++) {
       barHeight = (dataArray[i] / 255) * canvas.height * 0.9;
@@ -1612,8 +1629,17 @@ function setupBackgroundVisualizer() {
 
       ctx.fillStyle = `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${alpha})`;
       ctx.fillRect(x, canvas.height - barHeight, barWidth - 1, barHeight);
-
       x += barWidth + 1;
+      // accumulate intensity for the album cover scaling
+      totalIntensity += intensity;
+    }
+
+    // Update background album cover scale if enabled
+    if (appConfig.visualizer?.backgroundAlbumCover && elements.backgroundAlbumCover && elements.backgroundAlbumCover.style.display !== 'none') {
+      const avgIntensity = totalIntensity / dataArray.length;
+      // Scale between 1.0 and 1.15 based on bass/average intensity
+      const scale = 1.0 + (avgIntensity * 0.2);
+      elements.backgroundAlbumCover.style.transform = `scale(${scale})`;
     }
 
     requestAnimationFrame(drawBackground);
@@ -1825,7 +1851,7 @@ function setupEventListeners() {
   // Auto-save settings when any setting changes
   const settingsModal = document.getElementById('settings-modal');
   if (settingsModal) {
-    const formElements = settingsModal.querySelectorAll('input[type="checkbox"], input[type="text"], input[type="number"], select, textarea');
+    const formElements = settingsModal.querySelectorAll('input[type="checkbox"], input[type="text"], input[type="number"], input[type="range"], select, textarea');
 
     formElements.forEach(element => {
       const configPath = element.dataset.configPath;
@@ -1835,6 +1861,10 @@ function setupEventListeners() {
         // Handle special cases that need immediate UI updates
         if (configPath === 'visualizer.enabled') {
           toggleVisualizerCanvas(e.target.checked);
+        } else if (configPath === 'visualizer.backgroundAlbumCover') {
+          toggleBackgroundAlbumCover(e.target.checked);
+        } else if (configPath === 'visualizer.backgroundAlbumCoverOpacity') {
+          updateBackgroundAlbumCoverOpacity(e.target.value);
         } else if (configPath.startsWith('broadcast.')) {
           // Handle broadcast settings changes
           await saveBroadcastSettings();
@@ -2002,8 +2032,8 @@ function togglePlayPause() {
 }
 
 function playNext() {
-  frontendLogger.info('playNext called', { currentTrackIndex, playlistLength: currentPlaylist ? currentPlaylist.tracks.length : 0, isShuffle, shuffleIndex });
-  if (!currentPlaylist || currentPlaylist.tracks.length === 0) return;
+  frontendLogger.info('playNext called', { currentTrackIndex, playlistLength: playingPlaylist ? playingPlaylist.tracks.length : 0, isShuffle, shuffleIndex });
+  if (!playingPlaylist || playingPlaylist.tracks.length === 0) return;
 
   let nextIndex;
   if (isShuffle) {
@@ -2027,16 +2057,16 @@ function playNext() {
     }
   } else {
     // Normal sequential playback
-    nextIndex = (currentTrackIndex + 1) % currentPlaylist.tracks.length;
+    nextIndex = (currentTrackIndex + 1) % playingPlaylist.tracks.length;
   }
 
-  const nextTrack = currentPlaylist.tracks[nextIndex];
-  playTrack(nextTrack, nextIndex);
+  const nextTrack = playingPlaylist.tracks[nextIndex];
+  playTrack(nextTrack, nextIndex, playingPlaylist);
 }
 
 function playPrevious() {
-  frontendLogger.info('playPrevious called', { currentTrackIndex, playlistLength: currentPlaylist ? currentPlaylist.tracks.length : 0, isShuffle, shuffleIndex });
-  if (!currentPlaylist || currentPlaylist.tracks.length === 0) return;
+  frontendLogger.info('playPrevious called', { currentTrackIndex, playlistLength: playingPlaylist ? playingPlaylist.tracks.length : 0, isShuffle, shuffleIndex });
+  if (!playingPlaylist || playingPlaylist.tracks.length === 0) return;
 
   let prevIndex;
   if (isShuffle) {
@@ -2061,11 +2091,11 @@ function playPrevious() {
     }
   } else {
     // Normal sequential playback
-    prevIndex = currentTrackIndex === 0 ? currentPlaylist.tracks.length - 1 : currentTrackIndex - 1;
+    prevIndex = currentTrackIndex === 0 ? playingPlaylist.tracks.length - 1 : currentTrackIndex - 1;
   }
 
-  const prevTrack = currentPlaylist.tracks[prevIndex];
-  playTrack(prevTrack, prevIndex);
+  const prevTrack = playingPlaylist.tracks[prevIndex];
+  playTrack(prevTrack, prevIndex, playingPlaylist);
 }
 
 function toggleRepeat() {
@@ -2679,7 +2709,7 @@ async function loadAppVersion() {
 function updateSettingsInputs(config) {
   // Automatically scan all form elements in settings modal
   const settingsModal = document.getElementById('settings-modal');
-  const formElements = settingsModal.querySelectorAll('input[type="checkbox"], input[type="text"], input[type="number"], select, textarea');
+  const formElements = settingsModal.querySelectorAll('input[type="checkbox"], input[type="text"], input[type="number"], input[type="range"], select, textarea');
 
   // Process each form element based on its data attributes
   formElements.forEach(element => {
@@ -2707,9 +2737,30 @@ function updateSettingsInputs(config) {
     }
   });
 
-  // Handle special UI updates
   const visualizerEnabled = config.visualizer?.enabled ?? true;
   toggleVisualizerCanvas(visualizerEnabled);
+
+  const backgroundAlbumCoverEnabled = config.visualizer?.backgroundAlbumCover ?? false;
+  toggleBackgroundAlbumCover(backgroundAlbumCoverEnabled);
+
+  const backgroundAlbumCoverOpacity = config.visualizer?.backgroundAlbumCoverOpacity !== undefined
+    ? config.visualizer.backgroundAlbumCoverOpacity
+    : 0.15;
+  updateBackgroundAlbumCoverOpacity(backgroundAlbumCoverOpacity);
+}
+
+function updateBackgroundAlbumCoverOpacity(opacity) {
+  document.documentElement.style.setProperty('--bg-album-opacity', opacity);
+}
+
+function toggleBackgroundAlbumCover(enabled) {
+  if (!elements.backgroundAlbumCover) return;
+  if (enabled && currentTrack && currentTrack.thumbnail) {
+    elements.backgroundAlbumCover.style.display = 'block';
+  } else {
+    elements.backgroundAlbumCover.style.display = 'none';
+    elements.backgroundAlbumCover.style.transform = 'scale(1)';
+  }
 }
 
 async function saveSettings() {
@@ -2718,7 +2769,7 @@ async function saveSettings() {
 
   // Automatically scan all form elements in settings modal
   const settingsModal = document.getElementById('settings-modal');
-  const formElements = settingsModal.querySelectorAll('input[type="checkbox"], input[type="text"], input[type="number"], select, textarea');
+  const formElements = settingsModal.querySelectorAll('input[type="checkbox"], input[type="text"], input[type="number"], input[type="range"], select, textarea');
 
   // Process each form element based on its data attributes
   formElements.forEach(element => {
@@ -2843,15 +2894,17 @@ function updateBroadcastState(extra = {}) {
         artist: currentTrack.artist || 'Unknown Artist',
         filePath: currentTrack.filePath,
         duration: currentTrack.duration || 0,
-        volume: typeof currentTrack.volume === 'number' ? currentTrack.volume : 1
+        volume: typeof currentTrack.volume === 'number' ? currentTrack.volume : 1,
+        thumbnail: currentTrack.thumbnail || null
       } : null,
       isPlaying: isPlaying,
       currentTime: getAccurateCurrentTime(),
       duration: audioElement.duration || 0,
       volume: globalVolume,
-      playlist: currentPlaylist ? {
-        id: currentPlaylist.id,
-        name: currentPlaylist.name
+      playlist: playingPlaylist ? {
+        id: playingPlaylist.id,
+        name: playingPlaylist.name,
+        iconPath: playingPlaylist.iconPath || null
       } : null,
       repeat: isRepeat,
       shuffle: isShuffle,
@@ -2885,7 +2938,7 @@ async function resetSettings() {
 
   // Scan form elements to build default config
   const settingsModal = document.getElementById('settings-modal');
-  const formElements = settingsModal.querySelectorAll('input[type="checkbox"], input[type="text"], input[type="number"], select, textarea');
+  const formElements = settingsModal.querySelectorAll('input[type="checkbox"], input[type="text"], input[type="number"], input[type="range"], select, textarea');
 
   formElements.forEach(element => {
     const configPath = element.dataset.configPath;

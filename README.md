@@ -25,8 +25,8 @@ An Electron-based music player that serves as a wrapper for [yt-dlp](https://git
 ![Local File Upload](Showcase/showcase6.webp)
 *Drag & drop local music files from your computer*
 
-![Backup Creation](Showcase/showcase3.webp)
-*Easy backup and restore functionality*
+![Store Path Management](Showcase/showcase3.webp)
+*Easily change your configuration and data storage directory*
 
 ![Settings Panel](Showcase/showcase4.png)
 *Comprehensive settings and configuration*
@@ -36,7 +36,7 @@ An Electron-based music player that serves as a wrapper for [yt-dlp](https://git
 
 ### Advanced Features
 - **Theme Customization**: Configurable color themes with dynamic backgrounds.
-- **Backup & Restore**: Save and restore playlists and tracks.
+- **Store Path Management**: Directly change where your playlists and tracks are stored on disk.
 - **Track Management**: Rename tracks, view file types, remove tracks.
 - **Playlist Organization**: Drag tracks between playlists.
 - **Per-track volume** Control with persistence.
@@ -57,20 +57,17 @@ Master Music Player includes a built-in HTTP server that allows you to stream yo
 - **Network Diagnostics**: Built-in ping measurement and drift monitoring
 - **Adaptive Sync Tolerance**: Automatically adjusts sync threshold based on network latency
 - **Buffer Progress**: Visual indication of download progress on remote devices
-- **Secure Access**: Token-based authentication with configurable IP restrictions
 
 ### How to Use Broadcasting
 
 1. **Enable Broadcasting**: Go to Settings → Broadcasting and enable the broadcast server
 2. **Configure Network**: Set your preferred host IP and port (default: localhost:4583)
-3. **Generate Access Token**: The app automatically creates a secure access token
-4. **Share the URL**: Copy the generated broadcast URL and open it on any device with a web browser
-5. **Connect Audio**: Click "Connect Audio" on the remote device to start streaming
+3. **Share the URL**: Copy the generated broadcast URL and open it on any device with a web browser
+4. **Connect Audio**: Click "Connect Audio" on the remote device to start streaming
 
 ### Broadcasting Settings
 
 - **Host & Port**: Configure which network interface and port to use
-- **Access Control**: Require authentication tokens and restrict by IP address
 - **Public Host**: Set a custom hostname for sharing (useful for external access)
 - **Security Options**: Enable HSTS headers and configure rate limiting
 
@@ -152,7 +149,6 @@ You can customize the application's theme by editing the `theme.json` file locat
 - Playlists are stored as JSON files in `data/playlists/`
 - Music files are stored in `data/songs/`
 - Theme configuration in `data/config/theme.json`
-- Backups are stored in `data/backups/`
 
 ## Contributing
 

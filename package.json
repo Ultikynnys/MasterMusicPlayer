@@ -1,6 +1,6 @@
 {
   "name": "master-music-player",
-  "version": "1.0.23",
+  "version": "1.0.24",
   "description": "A comprehensive music player with yt-dlp integration",
   "main": "src/main.js",
   "scripts": {

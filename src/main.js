@@ -82,6 +82,7 @@ async function cleanupWorkerPool() {
 async function initializeBroadcastServer() {
   try {
     broadcastServer = new BroadcastServer();
+    broadcastServer.setAppDataPath(appDataPath);
 
     // Set up event listeners
     broadcastServer.on('started', (info) => {

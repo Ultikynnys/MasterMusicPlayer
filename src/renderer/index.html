@@ -5,7 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta http-equiv="Content-Security-Policy"
-        content="default-src 'self'; script-src 'self' 'unsafe-inline'; worker-src blob: 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: file:; media-src 'self' file:; font-src 'self';">
+        content="default-src 'self'; script-src 'self' 'unsafe-inline'; worker-src blob: 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: file: https:; media-src 'self' file:; font-src 'self';">
     <title>Master Music Player</title>
     <link rel="stylesheet" href="styles.css">
 </head>
@@ -84,7 +84,10 @@
 
             <!-- Content Area -->
             <main class="content">
-                <!-- Background Visualizer -->
+                <!-- Background Cover & Visualizer -->
+                <div class="background-album-cover-container">
+                    <img id="background-album-cover" class="background-album-cover" alt="" style="display: none;" />
+                </div>
                 <canvas id="background-visualizer" class="background-visualizer"></canvas>
 
                 <!-- Playlist View -->
@@ -251,6 +254,22 @@
                                 <input type="checkbox" id="visualizer-enabled" data-config-path="visualizer.enabled"
                                     data-default-value="true"> Enable Visualizer
                             </label>
+                        </div>
+                        <div class="checkbox-control">
+                            <label>
+                                <input type="checkbox" id="background-album-cover-enabled"
+                                    data-config-path="visualizer.backgroundAlbumCover" data-default-value="false">
+                                Enable Background Album Cover
+                            </label>
+                            <div class="slider-control" style="margin-top: 10px;">
+                                <label
+                                    style="display:flex; justify-content:space-between; width:100%; font-size: 0.9em; color: var(--text-color);">
+                                    Opacity
+                                </label>
+                                <input type="range" id="background-album-cover-opacity"
+                                    data-config-path="visualizer.backgroundAlbumCoverOpacity" data-default-value="0.15"
+                                    min="0" max="1" step="0.01" class="slider" style="width:100%;">
+                            </div>
                         </div>
                         <div class="checkbox-control">
                             <label>

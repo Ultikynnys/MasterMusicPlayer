@@ -38,6 +38,14 @@ class BroadcastServer extends EventEmitter {
     // Basic rate limiting (per IP)
     this.rateLimit = new Map();
     this.rateLimitConfig = { windowMs: 60_000, max: 120 };
+    this.appDataPath = null;
+  }
+
+  /**
+   * Inject application data path for local resource resolution
+   */
+  setAppDataPath(dataPath) {
+    this.appDataPath = dataPath;
   }
 
   /**
@@ -208,13 +216,22 @@ class BroadcastServer extends EventEmitter {
     let effectiveCurrent = base;
     if (dur > 0) effectiveCurrent = Math.min(effectiveCurrent, dur);
     const ephemeralAction = (s.action && (serverNow - (s.actionAt || 0) < 1500)) ? s.action : null;
+    let albumArtUrl = null;
+    if (s.track && s.track.thumbnail) {
+      if (s.track.thumbnail.startsWith('http')) albumArtUrl = s.track.thumbnail;
+      else albumArtUrl = `/api/album-art?t=${encodeURIComponent(s.track.id)}`;
+    } else if (s.playlist && s.playlist.iconPath) {
+      if (s.playlist.iconPath.startsWith('http')) albumArtUrl = s.playlist.iconPath;
+      else albumArtUrl = `/api/album-art?p=${encodeURIComponent(s.playlist.id)}`;
+    }
+
     const t = s.track ? {
       id: s.track.id,
       name: s.track.name,
       artist: s.track.artist || 'Unknown Artist',
       duration: s.track.duration || 0,
       volume: typeof s.track.volume === 'number' ? s.track.volume : 1,
-      thumbnail: s.track.thumbnail || null
+      thumbnail: albumArtUrl
     } : null;
     return {
       track: t,
@@ -302,11 +319,17 @@ class BroadcastServer extends EventEmitter {
         case '/api/audio':
           await this.serveAudioStream(req, res);
           break;
+        case '/api/album-art':
+          await this.serveAlbumArt(req, res);
+          break;
         case '/api/theme':
           await this.serveThemeConfig(req, res);
           break;
         case '/broadcast.css':
           await this.serveStaticFile(req, res, path.join(__dirname, 'broadcast.css'), 'text/css');
+          break;
+        case '/broadcast.css.map':
+          await this.serveStaticFile(req, res, path.join(__dirname, 'broadcast.css.map'), 'application/json');
           break;
         case '/broadcastClient.js':
           await this.serveStaticFile(req, res, path.join(__dirname, 'broadcastClient.js'), 'application/javascript');
@@ -511,6 +534,52 @@ class BroadcastServer extends EventEmitter {
     }
   }
 
+  /**
+   * Serve local album artwork (icon or thumbnail depending on context)
+   */
+  async serveAlbumArt(req, res) {
+    if (req.method !== 'GET') {
+      res.writeHead(405, { 'Content-Type': 'application/json', ...this.getSecurityHeaders('application/json') });
+      res.end(JSON.stringify({ error: 'Method Not Allowed' }));
+      return;
+    }
+
+    try {
+      const state = this.currentState;
+      let finalPath = null;
+
+      // Preferred context: Track local thumbnail 
+      if (state.track && state.track.thumbnail && this.appDataPath && !state.track.thumbnail.startsWith('http')) {
+        finalPath = path.isAbsolute(state.track.thumbnail) ? state.track.thumbnail : path.join(this.appDataPath, state.track.thumbnail);
+      }
+      // Secondary context: Playlist Icon
+      else if (state.playlist && state.playlist.iconPath && this.appDataPath) {
+        if (!state.playlist.iconPath.startsWith('http')) {
+          finalPath = path.isAbsolute(state.playlist.iconPath) ? state.playlist.iconPath : path.join(this.appDataPath, state.playlist.iconPath);
+        }
+      }
+
+      if (!finalPath || !(await fs.pathExists(finalPath))) {
+        res.writeHead(404, { 'Content-Type': 'text/plain', ...this.getSecurityHeaders('text/plain') });
+        res.end('Not Found');
+        return;
+      }
+
+      const ext = path.extname(finalPath).toLowerCase();
+      let mimeType = 'image/png';
+      if (ext === '.jpg' || ext === '.jpeg') mimeType = 'image/jpeg';
+      if (ext === '.webp') mimeType = 'image/webp';
+      if (ext === '.gif') mimeType = 'image/gif';
+      if (ext === '.svg') mimeType = 'image/svg+xml';
+
+      await this.serveStaticFile(req, res, finalPath, mimeType);
+    } catch (error) {
+      logger.error('Error serving album art', error);
+      res.writeHead(500, { 'Content-Type': 'text/plain', ...this.getSecurityHeaders('text/plain') });
+      res.end('Internal Server Error');
+    }
+  }
+
 
   /**
    * Serve theme configuration
@@ -679,8 +748,18 @@ class BroadcastServer extends EventEmitter {
     const audioPlayerDisplay = track ? '' : 'style="display:none"';
     const audioSourceTag = track ? `<source src="/api/audio" type="audio/mpeg">` : '';
     const trackVolume = this.currentState.track && typeof this.currentState.track.volume === 'number' ? this.currentState.track.volume : 1;
-    const trackThumbnail = track && track.thumbnail ? track.thumbnail : '';
-    const thumbnailDisplay = track && track.thumbnail ? '' : 'style="display:none"';
+
+    let albumArtUrl = null;
+    if (track && track.thumbnail) {
+      if (track.thumbnail.startsWith('http')) albumArtUrl = track.thumbnail;
+      else albumArtUrl = `/api/album-art?t=${encodeURIComponent(track.id)}`;
+    } else if (this.currentState.playlist && this.currentState.playlist.iconPath) {
+      if (this.currentState.playlist.iconPath.startsWith('http')) albumArtUrl = this.currentState.playlist.iconPath;
+      else albumArtUrl = `/api/album-art?p=${encodeURIComponent(this.currentState.playlist.id)}`;
+    }
+
+    const trackThumbnail = albumArtUrl || '';
+    const thumbnailDisplay = albumArtUrl ? '' : 'style="display:none"';
 
     // Interpolate key-value pairs
     const vars = {
