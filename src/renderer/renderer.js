@@ -1217,7 +1217,7 @@ async function playTrack(track, index, sourcePlaylist = currentPlaylist) {
     currentTrackIndex = index;
 
     if (elements.backgroundAlbumCover) {
-      const coverSrc = track.thumbnail || (currentPlaylist ? currentPlaylist.iconPath : '') || '';
+      const coverSrc = track.thumbnail || (playingPlaylist ? playingPlaylist.iconPath : '') || '';
       const bgEnabled = appConfig.visualizer?.backgroundAlbumCover ?? false;
 
       if (coverSrc && bgEnabled) {
@@ -2757,7 +2757,8 @@ function updateBackgroundAlbumCoverOpacity(opacity) {
 
 function toggleBackgroundAlbumCover(enabled) {
   if (!elements.backgroundAlbumCover) return;
-  if (enabled && currentTrack && currentTrack.thumbnail) {
+  const currentCoverSrc = currentTrack ? (currentTrack.thumbnail || (playingPlaylist ? playingPlaylist.iconPath : '')) : '';
+  if (enabled && currentCoverSrc) {
     elements.backgroundAlbumCover.style.display = 'block';
   } else {
     elements.backgroundAlbumCover.style.display = 'none';
