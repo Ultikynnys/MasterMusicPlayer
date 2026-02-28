@@ -1,17 +1,14 @@
 const { exec } = require('child_process');
 const path = require('path');
 const fs = require('fs');
+const { app } = require('electron');
 const logger = require('./logger');
 
-// Use static FFmpeg binaries from npm packages
+// Use static FFmpeg binaries from npm packages as fallback for dev
 let staticFFmpegPath, staticFFprobePath;
 try {
     staticFFmpegPath = require('ffmpeg-static');
     staticFFprobePath = require('ffprobe-static').path;
-    logger.info('Static FFmpeg packages loaded', {
-        ffmpegPath: staticFFmpegPath,
-        ffprobePath: staticFFprobePath
-    });
 } catch (error) {
     logger.warn('Static FFmpeg packages not available', error.message);
 }
@@ -23,10 +20,23 @@ class FFmpegHelper {
         this.initialized = false;
     }
 
+    getVendorPath() {
+        if (!app.isPackaged) {
+            return path.join(process.cwd(), 'src', 'vendor');
+        }
+        return path.join(path.dirname(app.getAppPath()), 'vendor');
+    }
 
+    getFFmpegExecutable() {
+        return process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg';
+    }
+
+    getFFprobeExecutable() {
+        return process.platform === 'win32' ? 'ffprobe.exe' : 'ffprobe';
+    }
 
     /**
-     * Initialize FFmpeg paths using static packages
+     * Initialize FFmpeg paths using bundled binaries or static packages
      */
     async initialize() {
         if (this.initialized) return;
@@ -34,79 +44,68 @@ class FFmpegHelper {
         try {
             logger.info('Starting FFmpeg initialization...');
 
-            // Use static packages if available
-            if (staticFFmpegPath && staticFFprobePath) {
-                logger.info('Testing static FFmpeg packages...', {
-                    ffmpegPath: staticFFmpegPath,
-                    ffprobePath: staticFFprobePath
-                });
+            const vendorDir = this.getVendorPath();
+            const ffmpegExec = this.getFFmpegExecutable();
+            const ffprobeExec = this.getFFprobeExecutable();
 
-                // Check if files exist
-                const ffmpegExists = fs.existsSync(staticFFmpegPath);
-                const ffprobeExists = fs.existsSync(staticFFprobePath);
+            const bundledFFmpegPath = path.join(vendorDir, ffmpegExec);
+            const bundledFFprobePath = path.join(vendorDir, ffprobeExec);
 
-                logger.info('FFmpeg file existence check', {
-                    ffmpegExists,
-                    ffprobeExists
-                });
+            // Priority 1: Check for bundled binaries in vendor directory
+            if (fs.existsSync(bundledFFmpegPath)) {
+                logger.info(`Found bundled FFmpeg at: ${bundledFFmpegPath}`);
 
-                if (ffmpegExists && ffprobeExists) {
+                // Ensure executable on non-Windows
+                if (process.platform !== 'win32') {
+                    try {
+                        fs.chmodSync(bundledFFmpegPath, 0o755);
+                    } catch (e) {
+                        logger.warn('Failed to set permissions on bundled FFmpeg', e.message);
+                    }
+                }
+
+                const ffmpegWorks = await this.testBinary(bundledFFmpegPath, ['-version']);
+                if (ffmpegWorks) {
+                    this.ffmpegPath = bundledFFmpegPath;
+
+                    // Try to find ffprobe too, but it's optional
+                    if (fs.existsSync(bundledFFprobePath)) {
+                        if (process.platform !== 'win32') {
+                            try { fs.chmodSync(bundledFFprobePath, 0o755); } catch (e) { }
+                        }
+                        if (await this.testBinary(bundledFFprobePath, ['-version'])) {
+                            this.ffprobePath = bundledFFprobePath;
+                        }
+                    }
+
+                    this.initialized = true;
+                    logger.info('FFmpeg initialized successfully using bundled binaries');
+                    return;
+                }
+            }
+
+            // Priority 2: Fallback to static packages if available
+            if (staticFFmpegPath && fs.existsSync(staticFFmpegPath)) {
+                logger.info('Falling back to static FFmpeg package');
+                if (await this.testBinary(staticFFmpegPath, ['-version'])) {
                     this.ffmpegPath = staticFFmpegPath;
                     this.ffprobePath = staticFFprobePath;
-
-                    // Verify the binaries work
-                    logger.info('Testing FFmpeg binaries...');
-                    const ffmpegWorks = await this.testBinary(this.ffmpegPath, ['-version']);
-                    const ffprobeWorks = await this.testBinary(this.ffprobePath, ['-version']);
-
-                    logger.info('FFmpeg binary test results', {
-                        ffmpegWorks,
-                        ffprobeWorks
-                    });
-
-                    if (ffmpegWorks && ffprobeWorks) {
-                        this.initialized = true;
-                        logger.info('FFmpeg initialized successfully using static packages', {
-                            ffmpegPath: this.ffmpegPath,
-                            ffprobePath: this.ffprobePath
-                        });
-                        return;
-                    } else {
-                        logger.warn('Static FFmpeg binaries not working properly', {
-                            ffmpegWorks,
-                            ffprobeWorks
-                        });
-                    }
-                } else {
-                    logger.warn('Static FFmpeg binaries not found on filesystem', {
-                        ffmpegExists,
-                        ffprobeExists,
-                        ffmpegPath: staticFFmpegPath,
-                        ffprobePath: staticFFprobePath
-                    });
+                    this.initialized = true;
+                    logger.info('FFmpeg initialized successfully using static packages');
+                    return;
                 }
-            } else {
-                logger.error('Static FFmpeg packages not loaded - cannot initialize FFmpeg');
-                this.ffmpegPath = null;
-                this.ffprobePath = null;
-                this.initialized = false;
-                throw new Error('Static FFmpeg packages not loaded');
             }
+
+            logger.error('No working FFmpeg binary found');
+            this.initialized = false;
 
         } catch (error) {
             logger.error('FFmpeg initialization failed', { error: error.message, stack: error.stack });
-
-            // Set paths to null so other parts of the app know FFmpeg is not available
             this.ffmpegPath = null;
             this.ffprobePath = null;
             this.initialized = false;
-
-            // Don't throw - let the app continue without FFmpeg
-            logger.warn('Continuing without FFmpeg - some features may not work properly');
         }
     }
-
-
 
     /**
      * Test if a binary works
@@ -114,49 +113,29 @@ class FFmpegHelper {
     testBinary(binaryPath, args) {
         return new Promise((resolve) => {
             const command = `"${binaryPath}" ${args.join(' ')}`;
-            logger.debug('Testing binary', { command });
-
             exec(command, { timeout: 10000 }, (error, stdout, stderr) => {
                 if (error) {
-                    logger.warn('Binary test failed', {
-                        binaryPath,
-                        command,
-                        error: error.message,
-                        stderr: stderr?.substring(0, 200)
-                    });
+                    logger.warn('Binary test failed', { binaryPath, error: error.message });
                     resolve(false);
                 } else {
-                    logger.debug('Binary test successful', {
-                        binaryPath,
-                        stdout: stdout?.substring(0, 100)
-                    });
                     resolve(true);
                 }
             });
         });
     }
 
-    /**
-     * Get FFmpeg path
-     */
     getFFmpegPath() {
         return this.ffmpegPath;
     }
 
-    /**
-     * Get FFprobe path
-     */
     getFFprobePath() {
         return this.ffprobePath;
     }
 
-    /**
-     * Check if FFmpeg is available
-     */
     isAvailable() {
-        return this.initialized && this.ffmpegPath && this.ffprobePath;
+        return this.initialized && this.ffmpegPath;
     }
 }
 
-// Export singleton instance
 module.exports = new FFmpegHelper();
+

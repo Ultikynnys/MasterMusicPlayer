@@ -1217,10 +1217,12 @@ async function playTrack(track, index, sourcePlaylist = currentPlaylist) {
     currentTrackIndex = index;
 
     if (elements.backgroundAlbumCover) {
-      if (track.thumbnail) {
-        elements.backgroundAlbumCover.src = track.thumbnail;
-        const bgEnabled = appConfig.visualizer?.backgroundAlbumCover ?? false;
-        elements.backgroundAlbumCover.style.display = bgEnabled ? 'block' : 'none';
+      const coverSrc = track.thumbnail || (currentPlaylist ? currentPlaylist.iconPath : '') || '';
+      const bgEnabled = appConfig.visualizer?.backgroundAlbumCover ?? false;
+
+      if (coverSrc && bgEnabled) {
+        elements.backgroundAlbumCover.src = coverSrc;
+        elements.backgroundAlbumCover.style.display = 'block';
       } else {
         elements.backgroundAlbumCover.src = '';
         elements.backgroundAlbumCover.style.display = 'none';

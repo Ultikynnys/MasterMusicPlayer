@@ -1542,12 +1542,20 @@ withErrorHandling('add-local-file', async (event, { filePath, playlistId }) => {
       await fs.copy(filePath, destinationPath);
     }
 
-    // Get duration from metadata
+    // Get metadata
     let duration = 0;
+    let thumbnail = null;
     try {
       const { parseFile } = await import('music-metadata');
-      const metadata = await parseFile(newPath);
+      const metadata = await parseFile(destinationPath);
       duration = metadata.format.duration;
+
+      // Extract album art
+      if (metadata.common.picture && metadata.common.picture.length > 0) {
+        const pic = metadata.common.picture[0];
+        thumbnail = `data:${pic.format};base64,${pic.data.toString('base64')}`;
+        logger.info('Album art extracted from local file', { filePath });
+      }
     } catch (error) {
       logger.error('Error reading metadata for local file', error, { filePath });
       // Try extracting duration using our audio extraction method
@@ -1567,6 +1575,7 @@ withErrorHandling('add-local-file', async (event, { filePath, playlistId }) => {
       filePath: toRelativePath(destinationPath), // Store relative path in playlist file
       fileType: fileExt,
       duration, // Save duration
+      thumbnail, // Save album art if found
       volume: 0.5,
       addedAt: new Date().toISOString()
     };
@@ -1621,8 +1630,24 @@ withErrorHandling('add-local-file-content', async (event, { fileName, fileConten
     await fs.writeFile(destinationPath, Buffer.from(fileContent));
     logger.info('File content written successfully', { destinationPath });
 
-    // Get duration using ffprobe
-    const duration = await extractAudioDuration(destinationPath);
+    // Get metadata details including duration and album art
+    let duration = 0;
+    let thumbnail = null;
+    try {
+      const { parseFile } = await import('music-metadata');
+      const metadata = await parseFile(destinationPath);
+      duration = metadata.format.duration;
+
+      // Extract album art
+      if (metadata.common.picture && metadata.common.picture.length > 0) {
+        const pic = metadata.common.picture[0];
+        thumbnail = `data:${pic.format};base64,${pic.data.toString('base64')}`;
+        logger.info('Album art extracted from local file content', { fileName });
+      }
+    } catch (error) {
+      logger.error('Error reading metadata for local file content', error, { fileName });
+      duration = await extractAudioDuration(destinationPath);
+    }
 
     const track = {
       id: uuidv4(),
@@ -1630,6 +1655,7 @@ withErrorHandling('add-local-file-content', async (event, { fileName, fileConten
       filePath: toRelativePath(destinationPath), // Store relative path in playlist file
       fileType: fileExt,
       duration, // Save duration
+      thumbnail, // Save album art if found
       volume: 0.5,
       addedAt: new Date().toISOString()
     };

@@ -1,6 +1,6 @@
 {
   "name": "master-music-player",
-  "version": "1.0.24",
+  "version": "1.0.25",
   "description": "A comprehensive music player with yt-dlp integration",
   "main": "src/main.js",
   "scripts": {
@@ -112,11 +112,19 @@
         {
           "from": "src/vendor/yt-dlp.exe",
           "to": "vendor/yt-dlp.exe"
+        },
+        {
+          "from": "src/vendor/ffmpeg.exe",
+          "to": "vendor/ffmpeg.exe"
+        },
+        {
+          "from": "src/vendor/ffprobe.exe",
+          "to": "vendor/ffprobe.exe"
         }
       ],
       "files": [
-        "!node_modules/ffmpeg-static/bin/linux/**",
-        "!node_modules/ffprobe-static/bin/linux/**"
+        "!node_modules/ffmpeg-static/bin/**",
+        "!node_modules/ffprobe-static/bin/**"
       ]
     },
     "linux": {
@@ -127,11 +135,19 @@
         {
           "from": "src/vendor/yt-dlp",
           "to": "vendor/yt-dlp"
+        },
+        {
+          "from": "src/vendor/ffmpeg",
+          "to": "vendor/ffmpeg"
+        },
+        {
+          "from": "src/vendor/ffprobe",
+          "to": "vendor/ffprobe"
         }
       ],
       "files": [
-        "!node_modules/ffmpeg-static/bin/win32/**",
-        "!node_modules/ffprobe-static/bin/win32/**"
+        "!node_modules/ffmpeg-static/bin/**",
+        "!node_modules/ffprobe-static/bin/**"
       ]
     },
     "nsis": {

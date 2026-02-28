@@ -84,9 +84,7 @@ async function downloadTrack(initialTrackInfo, songsPath, taskId, cookiesPath) {
     '--age-limit', '99',
     '--extractor-args', 'youtube:player_client=android,web,tv_embedded,mweb,ios',
     '--extractor-args', 'youtube:skip=hls,dash,translated_subs',
-    '--extractor-args', 'youtube:innertube_host=studio.youtube.com',
-    '--extractor-args', 'youtube:player_skip=configs,webpage,js',
-    '--extractor-args', 'youtube:include_live_dash=false',
+    '--extractor-args', 'youtube:formats=incomplete',
     '--no-check-certificates',
     '--geo-bypass',
     '--ignore-errors',
@@ -111,14 +109,16 @@ async function downloadTrack(initialTrackInfo, songsPath, taskId, cookiesPath) {
     process.send({ type: 'log', level: 'info', message: `[Worker ${workerId}] Metadata fetched successfully with enhanced bypass` });
   } catch (firstError) {
     // Check if this is an age restriction error that might be solved with cookies
-    const isAgeRestricted = firstError.stderr && (
+    const isBlocked = firstError.stderr && (
       firstError.stderr.includes('Sign in to confirm your age') ||
       firstError.stderr.includes('age-restricted') ||
-      firstError.stderr.includes('inappropriate for some users')
+      firstError.stderr.includes('inappropriate for some users') ||
+      firstError.stderr.includes('confirm you\'re not a bot') ||
+      firstError.stderr.includes('Sign in to confirm you')
     );
 
-    if (isAgeRestricted && await fs.pathExists(cookiesFilePath)) {
-      process.send({ type: 'log', level: 'info', message: `[Worker ${workerId}] Age restriction detected, trying with cookies.txt at ${cookiesFilePath}` });
+    if (isBlocked && await fs.pathExists(cookiesFilePath)) {
+      process.send({ type: 'log', level: 'info', message: `[Worker ${workerId}] Block detected (age/bot), trying with cookies.txt at ${cookiesFilePath}` });
 
       try {
         const cookieFileArgs = [
@@ -141,11 +141,11 @@ async function downloadTrack(initialTrackInfo, songsPath, taskId, cookiesPath) {
         error.shouldSkip = true;
         throw error;
       }
-    } else if (isAgeRestricted) {
-      // Age-restricted but no cookies available - skip immediately
-      process.send({ type: 'log', level: 'warn', message: `[Worker ${workerId}] Age-restricted content detected but no cookies.txt available. Skipping this track.` });
+    } else if (isBlocked) {
+      // Blocked but no cookies available - skip immediately
+      process.send({ type: 'log', level: 'warn', message: `[Worker ${workerId}] Blocked (age/bot) detected but no cookies.txt available. Skipping this track.` });
 
-      const error = new Error('AGE_RESTRICTED_SKIP: This video is age-restricted and requires valid YouTube cookies. No cookies.txt found. Skipping track.');
+      const error = new Error('BLOCKED_SKIP: This video is blocked (age/bot) and requires YouTube cookies to bypass. Please export cookies.txt to the data folder. Skipping track.');
       error.isAgeRestricted = true;
       error.shouldSkip = true;
       throw error;
@@ -156,7 +156,7 @@ async function downloadTrack(initialTrackInfo, songsPath, taskId, cookiesPath) {
         stderr: firstError.stderr
       });
 
-      const finalErrorMessage = 'Failed to download this video. This may be due to age restrictions or other YouTube blocks. Please ensure you are providing a valid URL.';
+      const finalErrorMessage = 'Failed to download this video. YouTube is blocking the request (bot detection or age restriction). To fix this, export your YouTube cookies to cookies.txt in the application data folder.';
       process.send({ type: 'log', level: 'error', message: `[Worker ${workerId}] ${finalErrorMessage}` });
 
       const error = new Error(finalErrorMessage);
@@ -181,9 +181,7 @@ async function downloadTrack(initialTrackInfo, songsPath, taskId, cookiesPath) {
     '--age-limit', '99',
     '--extractor-args', 'youtube:player_client=android,web,tv_embedded,mweb,ios',
     '--extractor-args', 'youtube:skip=hls,dash,translated_subs',
-    '--extractor-args', 'youtube:innertube_host=studio.youtube.com',
-    '--extractor-args', 'youtube:player_skip=configs,webpage,js',
-    '--extractor-args', 'youtube:include_live_dash=false',
+    '--extractor-args', 'youtube:formats=incomplete',
     '--no-check-certificates',
     '--geo-bypass',
     '--ignore-errors',
