@@ -1,8 +1,11 @@
+@use '../abstracts/mixins';
+
 /* Base Styles */
 * {
     margin: 0;
     padding: 0;
     box-sizing: border-box;
+    @include mixins.standard-scrollbar;
 }
 
 .no-select {
@@ -28,28 +31,6 @@ svg[fill]:not([fill="none"]):not([fill="currentColor"]):not(#kofi-btn svg) {
 .banner-image,
 img[src$=".svg"] {
     transition: filter 0.3s ease;
-}
-
-/* Scrollbar Styling */
-::-webkit-scrollbar {
-    width: 8px;
-}
-
-::-webkit-scrollbar-track {
-    background: var(--background-color);
-}
-
-::-webkit-scrollbar-thumb {
-    background: var(--border-color);
-    border-radius: 4px;
-
-    &:hover {
-        background: var(--primary-color);
-    }
-}
-
-::-webkit-scrollbar-corner {
-    background: var(--container-color);
 }
 
 /* Loading Overlay */

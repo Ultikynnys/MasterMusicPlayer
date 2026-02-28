@@ -1,3 +1,5 @@
+@use '../abstracts/mixins';
+
 /* Track List & audio Player */
 .playlist-header {
     display: flex;
@@ -47,7 +49,7 @@
     flex: 1;
     display: flex;
     flex-direction: column;
-    overflow-y: auto;
+    @include mixins.scroll-container;
 }
 
 .drop-zone {
