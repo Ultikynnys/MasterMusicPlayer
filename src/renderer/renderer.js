@@ -172,7 +172,7 @@ ipcRenderer.on('broadcast-error', (_, data) => {
 // Helper function to convert hex color to RGB (moved to themeUtils)
 
 // Icon paths
-const REPEAT_ICON = './assets/Repeat.svg';
+const REPEAT_ICON = './assets/repeat.svg';
 const NO_REPEAT_ICON = './assets/NoRepeat.svg';
 const SHUFFLE_ICON = './assets/Shuffle.png';
 const NO_SHUFFLE_ICON = './assets/NoShuffle.png';
