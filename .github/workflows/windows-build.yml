@@ -39,5 +39,7 @@ jobs:
         uses: actions/upload-artifact@v5
         with:
           name: ${{ inputs.build_name }}
-          path: dist/**
+          path: |
+            dist/*.exe
+            dist/*.exe.blockmap
           if-no-files-found: error
