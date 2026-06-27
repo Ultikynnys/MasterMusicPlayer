@@ -7,6 +7,10 @@ name: Windows Build
         description: Build artifact name
         required: false
         default: windows-build
+      version:
+        description: Version to build. Leave as commit-count to use 1.0.<commit count>.
+        required: false
+        default: commit-count
   push:
     paths:
       - .github/workflows/windows-build.yml
@@ -30,6 +34,21 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Set build version
+        shell: pwsh
+        run: |
+          $requestedVersion = '${{ inputs.version }}'
+          $package = Get-Content -Raw -LiteralPath 'package.json' | ConvertFrom-Json
+
+          if ($requestedVersion -eq 'commit-count' -or [string]::IsNullOrWhiteSpace($requestedVersion)) {
+            $parts = $package.version.Split('.')
+            $commitCount = git rev-list --count HEAD
+            $requestedVersion = "$($parts[0]).$($parts[1]).$commitCount"
+          }
+
+          npm version $requestedVersion --no-git-tag-version
+          "BUILD_VERSION=$requestedVersion" | Out-File -FilePath $env:GITHUB_ENV -Append
+
       - name: Build Windows package
         run: npm run build-optimized -- --win --publish never
         env:
@@ -38,7 +57,7 @@ jobs:
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@v5
         with:
-          name: ${{ inputs.build_name }}
+          name: ${{ inputs.build_name }}-${{ env.BUILD_VERSION }}
           path: |
             dist/*.exe
             dist/*.exe.blockmap
