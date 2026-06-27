@@ -2,8 +2,10 @@ const http = require('http');
 const path = require('path');
 const fs = require('fs-extra');
 const crypto = require('crypto');
+const { spawn } = require('child_process');
 const { EventEmitter } = require('events');
 const logger = require('./logger');
+const ffmpegHelper = require('./ffmpegHelper');
 
 const { lightenColor, isLightColor } = require('./themeUtils');
 
@@ -159,7 +161,7 @@ class BroadcastServer extends EventEmitter {
     const prev = this.currentState || {};
     // Merge new snapshot (no server-side extrapolation bookkeeping)
     this.currentState = { ...prev, ...newState };
-    // Record ephemeral action timestamp for fallbacks (heartbeat)
+    // Record ephemeral action timestamp for short-lived control events.
     if (newState && newState.action) {
       this.currentState.action = newState.action;
       this.currentState.actionAt = now;
@@ -297,7 +299,7 @@ class BroadcastServer extends EventEmitter {
       }
 
       // Rate limit (skip for audio streaming to prevent stutter)
-      if (pathname !== '/api/audio' && this.isRateLimited(clientIp)) {
+      if (pathname !== '/api/stream' && this.isRateLimited(clientIp)) {
         res.writeHead(429, { 'Content-Type': 'application/json', ...this.getSecurityHeaders('application/json') });
         res.end(JSON.stringify({ error: 'Too many requests' }));
         return;
@@ -313,11 +315,8 @@ class BroadcastServer extends EventEmitter {
         case '/api/events':
           await this.serveEvents(req, res);
           break;
-        case '/api/state':
-          await this.serveCurrentState(req, res);
-          break;
-        case '/api/audio':
-          await this.serveAudioStream(req, res);
+        case '/api/stream':
+          await this.serveIcyStream(req, res);
           break;
         case '/api/album-art':
           await this.serveAlbumArt(req, res);
@@ -353,6 +352,11 @@ class BroadcastServer extends EventEmitter {
     const html = await this.generateNowPlayingHTML();
     res.writeHead(200, { 'Content-Type': 'text/html', 'Cache-Control': 'no-store', ...this.getSecurityHeaders('text/html') });
     res.end(html);
+  }
+
+  sendJson(res, statusCode, body) {
+    res.writeHead(statusCode, { 'Content-Type': 'application/json', ...this.getSecurityHeaders('application/json') });
+    res.end(JSON.stringify(body));
   }
 
   /**
@@ -436,101 +440,100 @@ class BroadcastServer extends EventEmitter {
   }
 
   /**
-   * Serve current playback state as JSON
+   * Serve an Icecast/Shoutcast-style HTTP MP3 stream for the current track.
    */
-  async serveCurrentState(req, res) {
-    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', ...this.getSecurityHeaders('application/json') });
-    res.end(JSON.stringify({
-      success: true,
-      data: this.buildPublicState(),
-      timestamp: Date.now()
-    }));
-  }
-
-  // (heartbeat endpoint removed; SSE is authoritative)
-
-  /**
-   * Serve audio stream for the current track
-   */
-  async serveAudioStream(req, res) {
-    // Allow only GET and HEAD to stream audio
-    if (req.method !== 'GET' && req.method !== 'HEAD') {
-      res.writeHead(405, { 'Content-Type': 'application/json', ...this.getSecurityHeaders('application/json') });
-      res.end(JSON.stringify({ error: 'Method not allowed' }));
+  async serveIcyStream(req, res) {
+    if (req.method !== 'GET') {
+      this.sendJson(res, 405, { error: 'Method not allowed' });
       return;
     }
-    if (!this.currentState.track || !this.currentState.track.filePath) {
-      res.writeHead(404, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'No track currently playing' }));
+
+    const track = this.currentState.track;
+    if (!track || !track.filePath) {
+      this.sendJson(res, 404, { error: 'No track currently playing' });
       return;
     }
 
     try {
-      const filePath = this.currentState.track.filePath;
-
+      const filePath = track.filePath;
       if (!await fs.pathExists(filePath)) {
-        res.writeHead(404, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Audio file not found' }));
+        this.sendJson(res, 404, { error: 'Audio file not found' });
         return;
       }
 
-      const stat = await fs.stat(filePath);
-      const fileSize = stat.size;
-      const range = req.headers.range;
-
-      if (req.method === 'HEAD') {
-        // Send only headers for current full file (no body)
-        res.writeHead(200, {
-          'Content-Length': fileSize,
-          'Content-Type': 'audio/mpeg',
-          'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
-          'Pragma': 'no-cache',
-          'Expires': '0',
-          'Content-Disposition': 'inline; filename="track.mp3"',
-          ...this.getSecurityHeaders('audio/mpeg')
-        });
-        res.end();
-      } else if (range) {
-        // Handle range requests for seeking
-        const parts = range.replace(/bytes=/, "").split("-");
-        const start = parseInt(parts[0], 10);
-        const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
-        const chunksize = (end - start) + 1;
-
-        const stream = fs.createReadStream(filePath, { start, end });
-
-        res.writeHead(206, {
-          'Content-Range': `bytes ${start}-${end}/${fileSize}`,
-          'Accept-Ranges': 'bytes',
-          'Content-Length': chunksize,
-          'Content-Type': 'audio/mpeg',
-          'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
-          'Pragma': 'no-cache',
-          'Expires': '0',
-          'Content-Disposition': 'inline; filename="track.mp3"',
-          ...this.getSecurityHeaders('audio/mpeg')
-        });
-
-        stream.pipe(res);
-      } else {
-        // Serve entire file
-        res.writeHead(200, {
-          'Content-Length': fileSize,
-          'Content-Type': 'audio/mpeg',
-          'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
-          'Pragma': 'no-cache',
-          'Expires': '0',
-          'Content-Disposition': 'inline; filename="track.mp3"',
-          ...this.getSecurityHeaders('audio/mpeg')
-        });
-
-        const stream = fs.createReadStream(filePath);
-        stream.pipe(res);
+      const ffmpegPath = ffmpegHelper.getFFmpegPath();
+      if (!ffmpegPath) {
+        this.sendJson(res, 503, { error: 'FFmpeg is not available for streaming' });
+        return;
       }
+
+      const startAt = Math.max(0, Number(this.currentState.currentTime) || 0);
+      const args = [
+        '-hide_banner',
+        '-loglevel', 'error',
+        '-re',
+        '-ss', String(startAt),
+        '-i', filePath,
+        '-vn',
+        '-acodec', 'libmp3lame',
+        '-b:a', '192k',
+        '-f', 'mp3',
+        'pipe:1'
+      ];
+
+      const streamProcess = spawn(ffmpegPath, args, { windowsHide: true });
+      let closed = false;
+
+      res.writeHead(200, {
+        'Content-Type': 'audio/mpeg',
+        'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
+        'Pragma': 'no-cache',
+        'Expires': '0',
+        'Connection': 'close',
+        'Accept-Ranges': 'none',
+        'icy-name': 'Master Music Player',
+        'icy-description': track.name || 'Master Music Player Stream',
+        'icy-genre': 'Music',
+        'icy-pub': '0',
+        'icy-br': '192',
+        ...this.getSecurityHeaders('audio/mpeg')
+      });
+
+      const cleanup = () => {
+        if (closed) return;
+        closed = true;
+        if (streamProcess && !streamProcess.killed) {
+          streamProcess.kill('SIGTERM');
+        }
+      };
+
+      req.on('close', cleanup);
+      res.on('close', cleanup);
+
+      streamProcess.stdout.pipe(res);
+      streamProcess.stderr.on('data', (data) => {
+        logger.debug('FFmpeg stream stderr', { message: String(data).trim() });
+      });
+      streamProcess.on('error', (error) => {
+        logger.error('Failed to start FFmpeg stream', error);
+        if (!res.headersSent) {
+          this.sendJson(res, 500, { error: 'Failed to start stream' });
+          return;
+        }
+        res.end();
+      });
+      streamProcess.on('close', () => {
+        if (!res.destroyed) {
+          res.end();
+        }
+      });
     } catch (error) {
-      logger.error('Error serving audio stream', error);
-      res.writeHead(500, { 'Content-Type': 'application/json', ...this.getSecurityHeaders('application/json') });
-      res.end(JSON.stringify({ error: 'Failed to serve audio' }));
+      logger.error('Error serving ICY stream', error);
+      if (!res.headersSent) {
+        this.sendJson(res, 500, { error: 'Failed to serve stream' });
+        return;
+      }
+      res.end();
     }
   }
 
@@ -746,7 +749,7 @@ class BroadcastServer extends EventEmitter {
     const statusIndicatorClass = isPlaying ? 'status-playing' : 'status-paused';
     const statusText = isPlaying ? 'Playing' : 'Paused';
     const audioPlayerDisplay = track ? '' : 'style="display:none"';
-    const audioSourceTag = track ? `<source src="/api/audio" type="audio/mpeg">` : '';
+    const audioSourceTag = track ? `<source src="/api/stream" type="audio/mpeg">` : '';
     const trackVolume = this.currentState.track && typeof this.currentState.track.volume === 'number' ? this.currentState.track.volume : 1;
 
     let albumArtUrl = null;

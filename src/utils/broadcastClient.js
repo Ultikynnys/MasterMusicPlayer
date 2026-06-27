@@ -1,9 +1,9 @@
 let isConnected = false;
 let audioPlayer = null;
 let currentTrackId = null; // string form for stable comparison
-let currentAudioUrl = '';
-let lastTrackChangeAt = 0;
 let deviceVolume = 1; // local slider volume (0..1), independent from app master
+let lastWasPlaying = false;
+let latestState = null;
 const configEl = document.getElementById('broadcast-config');
 const broadcastConfig = configEl ? JSON.parse(configEl.textContent) : { trackVolume: 1, theme: {} };
 let trackVolume = broadcastConfig.trackVolume; // per-track (0..1)
@@ -17,6 +17,26 @@ function getApiUrl(endpoint, extraParams = {}) {
     }
     const qs = params.toString();
     return qs ? (endpoint + '?' + qs) : endpoint;
+}
+
+function getStreamUrl(reason = 'stream') {
+    return getApiUrl('/api/stream', {
+        v: Date.now(),
+        track: currentTrackId || '',
+        reason
+    });
+}
+
+function reloadStream(reason, shouldPlay) {
+    if (!audioPlayer) return;
+
+    audioPlayer.src = getStreamUrl(reason);
+    audioPlayer.load();
+    applyEffectiveVolume();
+
+    if (shouldPlay) {
+        audioPlayer.play().catch(e => console.log('Stream playback failed:', e));
+    }
 }
 
 // Helper function to format time in MM:SS format
@@ -39,9 +59,7 @@ let uiBaseCurrent = 0;
 let uiBaseTimestamp = 0;
 let uiIsPlaying = false;
 let uiDuration = 0;
-let localEnded = false; // if client finished the track earlier, wait for server track change
 let lastActionAppliedAt = 0; // timestamp of last processed explicit action
-let firstSyncAfterConnect = false; // start at displayed time on first sync after connect
 
 function updateUiClock() {
     try {
@@ -88,6 +106,8 @@ function updateBufferUI() {
 
 // Unified handler for applying state updates (used by SSE)
 function processUpdate(state, allowSync = true) {
+    latestState = state;
+
     // Update track info
     document.getElementById('track-name').textContent =
         state.track ? state.track.name : 'No track playing';
@@ -132,120 +152,41 @@ function processUpdate(state, allowSync = true) {
         // Server time is UI-only; no diff computation in simplified mode
     }
 
-    // Update audio player if connected
+    // Audio uses one Shoutcast/ICY-style stream; SSE drives metadata and stream changes.
     if (isConnected && audioPlayer && state.track) {
         const incomingId = String(state.track.id);
-        // Check if track has changed (debounce to avoid rapid reload loops)
         const trackChanged = currentTrackId !== incomingId;
         if (trackChanged) {
             trackVolume = (state.track && typeof state.track.volume === 'number') ? state.track.volume : 1;
-            // Debounce track change handling to avoid rapid reload loops
-            const nowTs = Date.now();
-            if (nowTs - lastTrackChangeAt < 800) {
-                return; // ignore rapid duplicate updates
-            }
-            lastTrackChangeAt = nowTs;
             currentTrackId = incomingId;
-            localEnded = false; // new track -> clear early-end gate
-            // Simplified: no offset calibration required
-            const audioUrl = getApiUrl('/api/audio', { v: incomingId });
-            if (currentAudioUrl !== audioUrl) {
-                currentAudioUrl = audioUrl;
-                audioPlayer.src = audioUrl;
-                audioPlayer.load();
-            }
-            const onMeta = () => {
-                audioPlayer.removeEventListener('loadedmetadata', onMeta);
-                // On first sync after connect, start at the currently displayed UI time; otherwise start at 0 on track changes
-                const displayed = (() => {
-                    if (!uiBaseTimestamp) return uiBaseCurrent || 0;
-                    const elapsed = uiIsPlaying ? (Date.now() - uiBaseTimestamp) / 1000 : 0;
-                    let t = (uiBaseCurrent || 0) + elapsed;
-                    if (uiDuration > 0) t = Math.min(t, uiDuration);
-                    return t;
-                })();
-                const startAt = firstSyncAfterConnect ? displayed : 0;
-                try { audioPlayer.currentTime = startAt; } catch (err) {
-                    console.warn('Failed to set current time during local playback sync', { startAt, error: err.message });
-                }
-                firstSyncAfterConnect = false;
-                applyEffectiveVolume();
-                updateBufferUI();
-                if (state.isPlaying) {
-                    audioPlayer.play().catch(e => console.log('Playback failed:', e));
-                }
-            };
-            audioPlayer.addEventListener('loadedmetadata', onMeta);
-        } else {
-            // Same track - sync time and play/pause using serverCurrentTime only
-            if (allowSync) {
-                const serverTime = (typeof state.serverCurrentTime === 'number') ? state.serverCurrentTime : (typeof state.currentTime === 'number' ? state.currentTime : 0);
+            if (state.isPlaying) reloadStream('track-change', true);
+        } else if (allowSync) {
+            trackVolume = (state.track && typeof state.track.volume === 'number') ? state.track.volume : 1;
+            const actionAt = (typeof state.actionAt === 'number') ? state.actionAt : Date.now();
 
-                // Reset localEnded if an explicit seek/repeat happens or the server time goes back significantly
-                if (state.action === 'seek' || (localEnded && typeof state.duration === 'number' && (state.duration - serverTime) > 1.0)) {
-                    localEnded = false;
-                }
-
-                // If server already ended this track, pause locally and wait
-                const serverEnded = (typeof state.duration === 'number' && state.duration > 0 && (serverTime >= (state.duration - 0.2)));
-                if (serverEnded) {
-                    localEnded = true;
-                    audioPlayer.pause();
-                    const st = document.getElementById('status-text');
-                    if (st) st.textContent = 'Waiting for next track...';
-                } else if (localEnded) {
-                    // Client ended early: pause and wait until server switches tracks
-                    audioPlayer.pause();
-                    if (state.isPlaying) {
-                        const st = document.getElementById('status-text');
-                        if (st) st.textContent = 'Waiting for next track...';
-                    }
-                } else {
-                    // Only on explicit seek: set playback position to serverTime
-                    if (state.action === 'seek') {
-                        const ts = (typeof state.actionAt === 'number') ? state.actionAt : Date.now();
-                        if (ts > lastActionAppliedAt) {
-                            audioPlayer.currentTime = serverTime;
-                            audioPlayer.playbackRate = 1.0;
-                            lastActionAppliedAt = ts; // apply once per action event
-                        }
-                    } else {
-                        // Apply hard drift correction only (no playbackRate stretching to avoid audio rubberbanding)
-                        const diff = serverTime - audioPlayer.currentTime;
-                        if (Math.abs(diff) > 2.5) {
-                            // Hard sync if drift is > 2.5 seconds
-                            audioPlayer.currentTime = serverTime;
-                        }
-
-                        // Always enforce normal speed
-                        if (audioPlayer.playbackRate !== 1.0) {
-                            audioPlayer.playbackRate = 1.0;
-                        }
-                    }
-                }
-            }
-            if (!localEnded) {
-                if (allowSync && state.isPlaying && audioPlayer.paused) {
-                    audioPlayer.play().catch(e => console.log('Playback failed:', e));
-                } else if (allowSync && !state.isPlaying && !audioPlayer.paused) {
-                    audioPlayer.pause();
-                }
-            } else {
-                // Ensure paused while waiting
+            if (state.action === 'seek' && actionAt > lastActionAppliedAt) {
+                lastActionAppliedAt = actionAt;
+                if (state.isPlaying) reloadStream('seek', true);
+            } else if (state.isPlaying && !lastWasPlaying) {
+                reloadStream('resume', true);
+            } else if (state.isPlaying && audioPlayer.paused) {
+                audioPlayer.play().catch(e => console.log('Stream playback failed:', e));
+            } else if (!state.isPlaying && !audioPlayer.paused) {
                 audioPlayer.pause();
             }
+
             applyEffectiveVolume();
             updateBufferUI();
         }
+
+        lastWasPlaying = !!state.isPlaying;
     } else if (isConnected && audioPlayer && !state.track) {
         currentTrackId = null;
+        lastWasPlaying = false;
         audioPlayer.pause();
         audioPlayer.src = '';
-        currentAudioUrl = '';
     }
 }
-
-// (heartbeat fallback removed)
 
 // Connection toggle
 function toggleConnection() {
@@ -258,14 +199,11 @@ function toggleConnection() {
         isConnected = true;
         connectBtn.classList.add('connected');
         connectionStatus.textContent = 'Disconnect Audio';
-        firstSyncAfterConnect = true;
 
         // Reset track ID to force reload on next update
         currentTrackId = null;
 
-        // Load current track
-        audioPlayer.src = getApiUrl('/api/audio', { v: Date.now() });
-        audioPlayer.load();
+        if (latestState) processUpdate(latestState);
         applyEffectiveVolume();
         updateBufferUI();
         // Buffer progress listeners
@@ -274,7 +212,6 @@ function toggleConnection() {
             audioPlayer.addEventListener('loadedmetadata', updateBufferUI);
             audioPlayer.addEventListener('seeking', updateBufferUI);
             audioPlayer.addEventListener('seeked', updateBufferUI);
-            audioPlayer.addEventListener('ended', () => { localEnded = true; });
         } catch (err) {
             console.warn('Failed to attach buffer listeners', err);
         }
@@ -290,6 +227,7 @@ function toggleConnection() {
         audioPlayer.pause();
         audioPlayer.src = '';
         currentTrackId = null;
+        lastWasPlaying = false;
 
         console.log('Audio disconnected');
     }
@@ -308,10 +246,8 @@ volumeSlider.addEventListener('input', (e) => {
     }
 });
 
-// Initialize Server-Sent Events with auto-reconnect
+// Initialize Server-Sent Events for playback state changes.
 let es = null;
-let reconnectTimeout = null;
-let sseConnected = false;
 
 function initSSE() {
     if (es) {
@@ -323,7 +259,6 @@ function initSSE() {
 
         es.onopen = () => {
             console.log('SSE connected');
-            sseConnected = true;
             const st = document.getElementById('status-text');
             if (st && st.textContent.includes('Reconnecting')) {
                 st.textContent = isConnected && currentTrackId ? 'Playing' : 'Waiting for track...';
@@ -340,20 +275,11 @@ function initSSE() {
 
         es.onerror = () => {
             console.log('SSE error, connection lost');
-            sseConnected = false;
-            es.close();
-
             const st = document.getElementById('status-text');
             if (st) st.textContent = 'Reconnecting...';
-
-            // Attempt to reconnect after 3 seconds
-            clearTimeout(reconnectTimeout);
-            reconnectTimeout = setTimeout(initSSE, 3000);
         };
     } catch (err) {
         console.log('SSE initialization failed', err);
-        clearTimeout(reconnectTimeout);
-        reconnectTimeout = setTimeout(initSSE, 5000);
     }
 }
 

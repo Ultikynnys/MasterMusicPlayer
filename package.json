@@ -99,7 +99,7 @@
     "asar": true,
     "compression": "maximum",
     "win": {
-      "icon": "build/icon.ico",
+      "icon": "src/renderer/assets/MMP_Logo.ico",
       "target": {
         "target": "nsis",
         "arch": [

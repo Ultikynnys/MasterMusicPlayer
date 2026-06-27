@@ -155,6 +155,16 @@ let playlistsPath = path.join(appDataPath, 'playlists');
 let iconsPath = path.join(appDataPath, 'icons');
 let configPath = path.join(appDataPath, 'config');
 let appConfigPath = path.join(configPath, 'app.json');
+let fallbackDataPath = appDataPath;
+
+function setDataPaths(dataPath) {
+  appDataPath = dataPath;
+  songsPath = path.join(appDataPath, 'songs');
+  playlistsPath = path.join(appDataPath, 'playlists');
+  iconsPath = path.join(appDataPath, 'icons');
+  configPath = path.join(appDataPath, 'config');
+  appConfigPath = path.join(configPath, 'app.json');
+}
 
 async function initialisePaths() {
   let baseDataPath;
@@ -190,13 +200,8 @@ async function initialisePaths() {
     logger.error('Failed to read global settings', err);
   }
 
-  appDataPath = customDataPath ? customDataPath : baseDataPath;
-
-  songsPath = path.join(appDataPath, 'songs');
-  playlistsPath = path.join(appDataPath, 'playlists');
-  iconsPath = path.join(appDataPath, 'icons');
-  configPath = path.join(appDataPath, 'config');
-  appConfigPath = path.join(configPath, 'app.json');
+  fallbackDataPath = baseDataPath;
+  setDataPaths(customDataPath ? customDataPath : baseDataPath);
 }
 
 // ---- Path helpers ----
@@ -249,6 +254,22 @@ async function createDataDirectories() {
     await fs.ensureDir(configPath);
     logger.info('Data directories created or verified');
   } catch (error) {
+    if (appDataPath !== fallbackDataPath) {
+      logger.error('Custom data path is unavailable, falling back to local app data', error, {
+        unavailablePath: appDataPath,
+        fallbackPath: fallbackDataPath
+      });
+
+      setDataPaths(fallbackDataPath);
+      await fs.ensureDir(appDataPath);
+      await fs.ensureDir(songsPath);
+      await fs.ensureDir(playlistsPath);
+      await fs.ensureDir(iconsPath);
+      await fs.ensureDir(configPath);
+      logger.info('Fallback data directories created or verified');
+      return;
+    }
+
     logger.error('Failed to create data directories', error);
     throw error;
   }
