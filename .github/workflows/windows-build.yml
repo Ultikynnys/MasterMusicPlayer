@@ -1,7 +1,12 @@
 name: Windows Build
 
-on:
+'on':
   workflow_dispatch:
+    inputs:
+      build_name:
+        description: Build artifact name
+        required: false
+        default: windows-build
 
 jobs:
   build-windows:
@@ -29,6 +34,6 @@ jobs:
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: windows-build
+          name: ${{ inputs.build_name }}
           path: dist/**
           if-no-files-found: error
