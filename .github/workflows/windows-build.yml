@@ -7,10 +7,14 @@ name: Windows Build
         description: Build artifact name
         required: false
         default: windows-build
+  push:
+    paths:
+      - .github/workflows/windows-build.yml
 
 jobs:
   build-windows:
     name: Build Windows Installer
+    if: github.event_name == 'workflow_dispatch'
     runs-on: windows-latest
 
     steps:
