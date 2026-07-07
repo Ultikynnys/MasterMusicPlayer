@@ -1209,9 +1209,11 @@ async function playTrack(track, index, sourcePlaylist = currentPlaylist) {
 
     audioElement.src = fileUrl;
     audioElement.load();
+    audioElement.currentTime = 0;
     audioElement.volume = 1;
     audioElement.muted = false; // keep unmuted; use gainNode for silence
     audioElement.playbackRate = 1.0; // enforce normal speed
+    seekClock(0);
 
     currentTrack = track;
     currentTrackIndex = index;
