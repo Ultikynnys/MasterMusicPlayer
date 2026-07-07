@@ -221,6 +221,7 @@ let appConfig = {};
 let lastVolume = 1;
 let globalVolume = 1; // New global volume multiplier
 let isRestoringState = false; // Flag to prevent saving during restoration
+let trackEndHandled = false;
 
 // Audio context & visualizer globals
 let audioContext = null;
@@ -642,15 +643,15 @@ function toggleVisualizer(enabled) {
   }
 }
 
-// --- Playback clock using AudioContext time (robust when backgrounded) ---
+// --- Playback clock using wall-clock time (robust when muted/backgrounded) ---
 let clockRunning = false;
 let clockAnchorTrackTime = 0; // seconds at last anchor
-let clockAnchorCtxTime = 0;   // audioCtx.currentTime at last anchor
+let clockAnchorPerfTime = 0;  // performance.now() at last anchor
 
 function beginClock() {
   try {
     clockAnchorTrackTime = audioElement ? (audioElement.currentTime || 0) : 0;
-    clockAnchorCtxTime = audioCtx ? (audioCtx.currentTime || 0) : 0;
+    clockAnchorPerfTime = performance.now();
     clockRunning = true;
   } catch (err) {
     frontendLogger.warn('Failed to begin media clock tracking', err);
@@ -662,7 +663,7 @@ function pauseClock() {
     // Freeze anchor to the most accurate reading
     const nowT = getAccurateCurrentTime();
     clockAnchorTrackTime = nowT;
-    clockAnchorCtxTime = audioCtx ? (audioCtx.currentTime || 0) : 0;
+    clockAnchorPerfTime = performance.now();
     clockRunning = false;
   } catch (err) {
     frontendLogger.warn('Failed to pause media clock tracking', err);
@@ -672,7 +673,7 @@ function pauseClock() {
 function seekClock(newTime) {
   try {
     clockAnchorTrackTime = Math.max(0, Number(newTime) || 0);
-    clockAnchorCtxTime = audioCtx ? (audioCtx.currentTime || 0) : 0;
+    clockAnchorPerfTime = performance.now();
   } catch (err) {
     frontendLogger.warn('Failed to seek media clock anchor', err);
   }
@@ -680,8 +681,8 @@ function seekClock(newTime) {
 
 function getAccurateCurrentTime() {
   try {
-    if (clockRunning && audioCtx && audioCtx.state !== 'suspended') {
-      const delta = (audioCtx.currentTime || 0) - (clockAnchorCtxTime || 0);
+    if (clockRunning) {
+      const delta = (performance.now() - (clockAnchorPerfTime || performance.now())) / 1000;
       let t = (clockAnchorTrackTime || 0) + (isFinite(delta) ? delta : 0);
       const dur = audioElement ? (audioElement.duration || 0) : 0;
       if (dur > 0) t = Math.min(t, dur);
@@ -692,6 +693,62 @@ function getAccurateCurrentTime() {
   } catch (err) {
     frontendLogger.warn('Error reading accurate audio time, falling back to basic element time', err);
     return audioElement ? (audioElement.currentTime || 0) : 0;
+  }
+}
+
+function correctMediaElementDrift(t) {
+  try {
+    if (!isPlaying || !audioElement || audioElement.paused || audioElement.seeking) return;
+    const duration = audioElement.duration || currentTrack?.duration || 0;
+    if (duration > 0 && t >= duration - 0.25) return;
+
+    const mediaTime = audioElement.currentTime || 0;
+    if (Math.abs(mediaTime - t) > 0.75) {
+      audioElement.currentTime = t;
+    }
+  } catch (err) {
+    frontendLogger.warn('Failed to correct media element drift', err);
+  }
+}
+
+function handleTrackEnd(reason = 'ended') {
+  if (trackEndHandled) return;
+  trackEndHandled = true;
+  frontendLogger.info('Track end handled', { reason, isRepeat, currentTrackIndex });
+
+  if (isRepeat) {
+    audioElement.currentTime = 0;
+    seekClock(0);
+    audioElement.play();
+    isPlaying = true;
+    trackEndHandled = false;
+    updatePlayerUI();
+    return;
+  }
+
+  playNext();
+}
+
+function advanceWhenClockReachesEnd(t) {
+  if (!isPlaying || !currentTrack || trackEndHandled) return;
+
+  const duration = audioElement && isFinite(audioElement.duration) && audioElement.duration > 0
+    ? audioElement.duration
+    : currentTrack.duration || 0;
+
+  if (duration > 0 && t >= duration - 0.1) {
+    handleTrackEnd('clock');
+  }
+}
+
+async function keepAudioContextActive(reason = 'playback') {
+  try {
+    if (isPlaying && audioCtx && audioCtx.state !== 'running') {
+      await audioCtx.resume();
+      frontendLogger.info('AudioContext resumed', { reason, state: audioCtx.state });
+    }
+  } catch (err) {
+    frontendLogger.warn('Failed to keep AudioContext active', { reason, error: err.message });
   }
 }
 
@@ -718,6 +775,8 @@ function startUITicker() {
       try {
         if (!audioElement) return;
         const t = getAccurateCurrentTime();
+        correctMediaElementDrift(t);
+        advanceWhenClockReachesEnd(t);
         if (elements.currentTime) elements.currentTime.textContent = formatTime(t);
         if (elements.progressSlider) {
           if (!elements.progressSlider.max || Number(elements.progressSlider.max) === 0) {
@@ -748,6 +807,8 @@ function startUITicker() {
       try {
         if (!audioElement) return;
         const t = getAccurateCurrentTime();
+        correctMediaElementDrift(t);
+        advanceWhenClockReachesEnd(t);
         if (elements.currentTime) elements.currentTime.textContent = formatTime(t);
         if (elements.progressSlider) {
           if (!elements.progressSlider.max || Number(elements.progressSlider.max) === 0) {
@@ -1217,6 +1278,7 @@ async function playTrack(track, index, sourcePlaylist = currentPlaylist) {
 
     currentTrack = track;
     currentTrackIndex = index;
+    trackEndHandled = false;
 
     if (elements.backgroundAlbumCover) {
       const coverSrc = track.thumbnail || (playingPlaylist ? playingPlaylist.iconPath : '') || '';
@@ -1373,15 +1435,7 @@ function setupAudioEventListeners() {
 
   audioElement.onended = () => {
     frontendLogger.info('audioElement ended', { isRepeat, currentTrackIndex, playlistLength: currentPlaylist ? currentPlaylist.tracks.length : 0 });
-    if (isRepeat) {
-      // Restart current track seamlessly
-      audioElement.currentTime = 0;
-      audioElement.play();
-      isPlaying = true;
-      updatePlayerUI();
-    } else {
-      playNext();
-    }
+    handleTrackEnd('media-ended');
   };
 
   // Notify broadcast on any seek (mouse, keyboard, programmatic)
@@ -1418,9 +1472,7 @@ function setupAudioEventListeners() {
   try {
     document.addEventListener('visibilitychange', async () => {
       try {
-        if (!document.hidden && audioCtx && audioCtx.state === 'suspended') {
-          await audioCtx.resume();
-        }
+        await keepAudioContextActive('visibilitychange');
         if (audioElement) {
           audioElement.playbackRate = 1.0;
         }
@@ -1430,6 +1482,18 @@ function setupAudioEventListeners() {
     });
   } catch (err) {
     frontendLogger.warn('Failed to bind visibilitychange event listener', err);
+  }
+
+  try {
+    audioCtx.onstatechange = () => {
+      keepAudioContextActive('statechange');
+    };
+    setInterval(() => {
+      keepAudioContextActive('health-check');
+      if (audioElement) audioElement.playbackRate = 1.0;
+    }, 1000);
+  } catch (err) {
+    frontendLogger.warn('Failed to start audio context health check', err);
   }
 }
 

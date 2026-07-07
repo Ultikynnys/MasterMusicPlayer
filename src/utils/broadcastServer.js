@@ -50,6 +50,45 @@ class BroadcastServer extends EventEmitter {
     this.appDataPath = dataPath;
   }
 
+  isHttpUrl(value) {
+    return typeof value === 'string' && /^https?:\/\//i.test(value);
+  }
+
+  isDataUrl(value) {
+    return typeof value === 'string' && /^data:/i.test(value);
+  }
+
+  isPathInside(parentPath, childPath) {
+    const relative = path.relative(parentPath, childPath);
+    return relative === '' || (!!relative && !relative.startsWith('..') && !path.isAbsolute(relative));
+  }
+
+  async resolvePathInside(rootPath, candidatePath) {
+    if (!rootPath || !candidatePath || this.isHttpUrl(candidatePath) || this.isDataUrl(candidatePath)) {
+      return null;
+    }
+
+    const resolvedRoot = path.resolve(rootPath);
+    if (!await fs.pathExists(resolvedRoot)) {
+      return null;
+    }
+
+    const resolvedCandidate = path.isAbsolute(candidatePath)
+      ? path.resolve(candidatePath)
+      : path.resolve(resolvedRoot, candidatePath);
+
+    if (!this.isPathInside(resolvedRoot, resolvedCandidate) || !await fs.pathExists(resolvedCandidate)) {
+      return null;
+    }
+
+    const [realRoot, realCandidate] = await Promise.all([
+      fs.realpath(resolvedRoot),
+      fs.realpath(resolvedCandidate)
+    ]);
+
+    return this.isPathInside(realRoot, realCandidate) ? realCandidate : null;
+  }
+
   /**
    * Start the broadcast server
    */
@@ -160,7 +199,7 @@ class BroadcastServer extends EventEmitter {
     const now = Date.now();
     const prev = this.currentState || {};
     // Merge new snapshot (no server-side extrapolation bookkeeping)
-    this.currentState = { ...prev, ...newState };
+    this.currentState = { ...prev, ...newState, stateUpdatedAt: now };
     // Record ephemeral action timestamp for short-lived control events.
     if (newState && newState.action) {
       this.currentState.action = newState.action;
@@ -169,6 +208,20 @@ class BroadcastServer extends EventEmitter {
     this.broadcastStateUpdate();
     // Log only sanitized state to avoid leaking paths
     logger.debug('Broadcast state updated (public)', this.buildPublicState());
+  }
+
+  getEffectiveCurrentTime() {
+    const s = this.currentState || {};
+    const base = (typeof s.currentTime === 'number') ? s.currentTime : 0;
+    const dur = s.duration || (s.track && s.track.duration) || 0;
+    let effectiveCurrent = base;
+
+    if (s.isPlaying && s.stateUpdatedAt) {
+      effectiveCurrent += Math.max(0, (Date.now() - s.stateUpdatedAt) / 1000);
+    }
+
+    if (dur > 0) effectiveCurrent = Math.min(effectiveCurrent, dur);
+    return Math.max(0, effectiveCurrent);
   }
 
   /**
@@ -212,18 +265,15 @@ class BroadcastServer extends EventEmitter {
   buildPublicState() {
     const s = this.currentState || {};
     const serverNow = Date.now();
-    // Publish raw currentTime without extrapolation
-    const base = (typeof s.currentTime === 'number') ? s.currentTime : 0;
     const dur = s.duration || (s.track && s.track.duration) || 0;
-    let effectiveCurrent = base;
-    if (dur > 0) effectiveCurrent = Math.min(effectiveCurrent, dur);
+    const effectiveCurrent = this.getEffectiveCurrentTime();
     const ephemeralAction = (s.action && (serverNow - (s.actionAt || 0) < 1500)) ? s.action : null;
     let albumArtUrl = null;
     if (s.track && s.track.thumbnail) {
-      if (s.track.thumbnail.startsWith('http')) albumArtUrl = s.track.thumbnail;
+      if (this.isHttpUrl(s.track.thumbnail) || this.isDataUrl(s.track.thumbnail)) albumArtUrl = s.track.thumbnail;
       else albumArtUrl = `/api/album-art?t=${encodeURIComponent(s.track.id)}`;
     } else if (s.playlist && s.playlist.iconPath) {
-      if (s.playlist.iconPath.startsWith('http')) albumArtUrl = s.playlist.iconPath;
+      if (this.isHttpUrl(s.playlist.iconPath) || this.isDataUrl(s.playlist.iconPath)) albumArtUrl = s.playlist.iconPath;
       else albumArtUrl = `/api/album-art?p=${encodeURIComponent(s.playlist.id)}`;
     }
 
@@ -240,7 +290,7 @@ class BroadcastServer extends EventEmitter {
       isPlaying: !!s.isPlaying,
       currentTime: effectiveCurrent,
       serverCurrentTime: effectiveCurrent,
-      duration: s.duration || 0,
+      duration: dur,
       playlistName: s.playlist && s.playlist.name ? s.playlist.name : null,
       repeat: !!s.repeat,
       shuffle: !!s.shuffle,
@@ -455,8 +505,9 @@ class BroadcastServer extends EventEmitter {
     }
 
     try {
-      const filePath = track.filePath;
-      if (!await fs.pathExists(filePath)) {
+      const songsPath = this.appDataPath ? path.join(this.appDataPath, 'songs') : null;
+      const filePath = await this.resolvePathInside(songsPath, track.filePath);
+      if (!filePath) {
         this.sendJson(res, 404, { error: 'Audio file not found' });
         return;
       }
@@ -467,7 +518,7 @@ class BroadcastServer extends EventEmitter {
         return;
       }
 
-      const startAt = Math.max(0, Number(this.currentState.currentTime) || 0);
+      const startAt = this.getEffectiveCurrentTime();
       const args = [
         '-hide_banner',
         '-loglevel', 'error',
@@ -550,15 +601,16 @@ class BroadcastServer extends EventEmitter {
     try {
       const state = this.currentState;
       let finalPath = null;
+      const iconsPath = this.appDataPath ? path.join(this.appDataPath, 'icons') : null;
 
       // Preferred context: Track local thumbnail 
-      if (state.track && state.track.thumbnail && this.appDataPath && !state.track.thumbnail.startsWith('http')) {
-        finalPath = path.isAbsolute(state.track.thumbnail) ? state.track.thumbnail : path.join(this.appDataPath, state.track.thumbnail);
+      if (state.track && state.track.thumbnail && this.appDataPath && !this.isHttpUrl(state.track.thumbnail) && !this.isDataUrl(state.track.thumbnail)) {
+        finalPath = await this.resolvePathInside(iconsPath, state.track.thumbnail);
       }
       // Secondary context: Playlist Icon
       else if (state.playlist && state.playlist.iconPath && this.appDataPath) {
-        if (!state.playlist.iconPath.startsWith('http')) {
-          finalPath = path.isAbsolute(state.playlist.iconPath) ? state.playlist.iconPath : path.join(this.appDataPath, state.playlist.iconPath);
+        if (!this.isHttpUrl(state.playlist.iconPath) && !this.isDataUrl(state.playlist.iconPath)) {
+          finalPath = await this.resolvePathInside(iconsPath, state.playlist.iconPath);
         }
       }
 
@@ -754,10 +806,10 @@ class BroadcastServer extends EventEmitter {
 
     let albumArtUrl = null;
     if (track && track.thumbnail) {
-      if (track.thumbnail.startsWith('http')) albumArtUrl = track.thumbnail;
+      if (this.isHttpUrl(track.thumbnail) || this.isDataUrl(track.thumbnail)) albumArtUrl = track.thumbnail;
       else albumArtUrl = `/api/album-art?t=${encodeURIComponent(track.id)}`;
     } else if (this.currentState.playlist && this.currentState.playlist.iconPath) {
-      if (this.currentState.playlist.iconPath.startsWith('http')) albumArtUrl = this.currentState.playlist.iconPath;
+      if (this.isHttpUrl(this.currentState.playlist.iconPath) || this.isDataUrl(this.currentState.playlist.iconPath)) albumArtUrl = this.currentState.playlist.iconPath;
       else albumArtUrl = `/api/album-art?p=${encodeURIComponent(this.currentState.playlist.id)}`;
     }
 
