@@ -307,6 +307,42 @@
                                 style="margin-left:8px;">Checking...</span>
                         </div>
 
+                        <!-- Download Tools Section -->
+                        <div class="tools-section" style="margin-top: 10px;">
+                            <h4>Download Tools</h4>
+                            <p style="font-size:0.8em; opacity:0.75; margin-top:-4px;">
+                                yt-dlp grabs the media; ffmpeg converts it. Pick your own build or grab the latest.
+                            </p>
+                            <div class="input-control">
+                                <label>yt-dlp executable:</label>
+                                <input type="text" id="ytdlp-path" readonly value="Detecting...">
+                                <div style="display:flex; gap:8px; margin-top:8px; flex-wrap:wrap; align-items:center;">
+                                    <button id="browse-ytdlp-btn" class="btn btn-secondary">Choose...</button>
+                                    <button id="download-ytdlp-btn" class="btn btn-secondary">Download Latest</button>
+                                    <button id="reset-ytdlp-btn" class="btn btn-secondary">Reset</button>
+                                    <span id="ytdlp-status" class="status-indicator">Checking...</span>
+                                </div>
+                            </div>
+                            <div class="input-control" style="margin-top:12px;">
+                                <label>ffmpeg executable:</label>
+                                <input type="text" id="ffmpeg-path" readonly value="Detecting...">
+                                <div style="display:flex; gap:8px; margin-top:8px; flex-wrap:wrap; align-items:center;">
+                                    <button id="browse-ffmpeg-btn" class="btn btn-secondary">Choose...</button>
+                                    <button id="download-ffmpeg-btn" class="btn btn-secondary">Download Latest</button>
+                                    <button id="reset-ffmpeg-btn" class="btn btn-secondary">Reset</button>
+                                    <span id="ffmpeg-status" class="status-indicator">Checking...</span>
+                                </div>
+                            </div>
+                            <div id="dependency-progress-wrap" style="margin-top:12px; display:none;">
+                                <div style="height:6px; background: var(--secondary-color); border-radius:3px; overflow:hidden;">
+                                    <div id="dependency-progress-bar"
+                                        style="height:100%; width:0%; background: var(--primary-color); transition: width 0.15s ease;">
+                                    </div>
+                                </div>
+                                <div id="dependency-progress-text" style="margin-top:6px; font-size:0.8em; opacity:0.8;"></div>
+                            </div>
+                        </div>
+
                         <!-- Broadcast Section -->
                         <div class="broadcast-section">
                             <h4>Broadcast (Now Playing)</h4>

@@ -13,6 +13,7 @@ const ProcessWorkerPool = require('./utils/processWorkerPool');
 const FileLock = require('./utils/fileLock');
 const ffmpegHelper = require('./utils/ffmpegHelper');
 const BroadcastServer = require('./utils/broadcastServer');
+const dependencyManager = require('./utils/dependencyManager');
 
 // Disable Chromium background throttling so timers and media events keep firing when unfocused
 try {
@@ -31,6 +32,8 @@ let processWorkerPool;
 let fileLock;
 let broadcastServer;
 let playbackPSBId = null; // power save blocker id when playing
+let settingsBasePath = null; // directory holding settings-global.json (userData or portable dir)
+const dependencyOverrides = { ytDlpPath: null, ffmpegPath: null };
 
 // Initialize process worker pool
 async function initializeWorkerPool(ytDlpPath) {
@@ -181,26 +184,16 @@ async function initialisePaths() {
     baseDataPath = path.join(app.getPath('userData'), 'data');
   }
 
-  let baseSettingsPath;
-  if (process.env.PORTABLE_EXECUTABLE_DIR) {
-    baseSettingsPath = process.env.PORTABLE_EXECUTABLE_DIR;
-  } else {
-    baseSettingsPath = app.getPath('userData');
-  }
+  settingsBasePath = process.env.PORTABLE_EXECUTABLE_DIR
+    ? process.env.PORTABLE_EXECUTABLE_DIR
+    : app.getPath('userData');
 
-  const globalSettingsPath = path.join(baseSettingsPath, 'settings-global.json');
-  let customDataPath = null;
+  const globalSettings = await dependencyManager.readGlobalSettings(settingsBasePath);
+  const customDataPath = globalSettings.customDataPath || null;
 
-  try {
-    if (await fs.pathExists(globalSettingsPath)) {
-      const globalSettings = await fs.readJson(globalSettingsPath);
-      if (globalSettings && globalSettings.customDataPath) {
-        customDataPath = globalSettings.customDataPath;
-      }
-    }
-  } catch (err) {
-    logger.error('Failed to read global settings', err);
-  }
+  // User-selected dependency binaries. null means auto-resolve (managed download, then bundled).
+  dependencyOverrides.ytDlpPath = globalSettings.ytDlpPath || null;
+  dependencyOverrides.ffmpegPath = globalSettings.ffmpegPath || null;
 
   fallbackDataPath = baseDataPath;
   setDataPaths(customDataPath ? customDataPath : baseDataPath);
@@ -437,11 +430,11 @@ app.whenReady().then(async () => {
   backgroundInitPromise = new Promise(async (resolve) => {
     try {
       logger.info('Initializing FFmpeg...');
-      await ffmpegHelper.initialize();
+      await ffmpegHelper.initialize(dependencyOverrides.ffmpegPath);
       logger.info('FFmpeg initialization completed');
 
       logger.info('Ensuring yt-dlp is available...');
-      await ytDlpHelper.ensureYtDlp();
+      await ytDlpHelper.ensureYtDlp(dependencyOverrides.ytDlpPath);
       logger.info('yt-dlp ensure process completed');
 
       const ytDlpPath = ytDlpHelper.getYtDlpPath();
@@ -800,6 +793,148 @@ withErrorHandling('get-app-version', async () => {
 withErrorHandling('save-app-config', async (event, config) => {
   await saveAppConfig(config);
   return true;
+});
+
+// ---------------------------------------------------------------------------
+// Dependency management (yt-dlp / ffmpeg): user-selected binaries and installs
+// ---------------------------------------------------------------------------
+
+function emitDependencyProgress(payload) {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('dependency-progress', payload);
+  }
+}
+
+async function applyYtDlpPath(customPath) {
+  dependencyOverrides.ytDlpPath = customPath || null;
+  await ytDlpHelper.ensureYtDlp(dependencyOverrides.ytDlpPath);
+  const resolved = ytDlpHelper.getYtDlpPath();
+  if (!resolved) return;
+  if (!processWorkerPool) {
+    await initializeWorkerPool(resolved);
+  } else {
+    processWorkerPool.updatePaths(resolved, ffmpegHelper.getFFmpegPath());
+  }
+}
+
+async function applyFfmpegPath(customPath) {
+  dependencyOverrides.ffmpegPath = customPath || null;
+  await ffmpegHelper.initialize(dependencyOverrides.ffmpegPath);
+  if (processWorkerPool) {
+    processWorkerPool.updatePaths(ytDlpHelper.getYtDlpPath(), ffmpegHelper.getFFmpegPath());
+  }
+}
+
+async function buildDependencyStatus() {
+  const ytDlpPath = ytDlpHelper.getYtDlpPath();
+  const ffmpegPath = ffmpegHelper.getFFmpegPath();
+  return {
+    ytDlp: {
+      path: ytDlpPath,
+      source: ytDlpHelper.getYtDlpSource(),
+      version: ytDlpPath ? await dependencyManager.detectYtDlpVersion(ytDlpPath) : null
+    },
+    ffmpeg: {
+      path: ffmpegPath,
+      source: ffmpegHelper.getFFmpegSource(),
+      version: ffmpegPath ? await dependencyManager.detectFfmpegVersion(ffmpegPath) : null
+    }
+  };
+}
+
+function executableFilters() {
+  return process.platform === 'win32'
+    ? [{ name: 'Executables', extensions: ['exe'] }, { name: 'All Files', extensions: ['*'] }]
+    : [{ name: 'All Files', extensions: ['*'] }];
+}
+
+withErrorHandling('get-dependency-status', async () => {
+  return await buildDependencyStatus();
+});
+
+withErrorHandling('browse-ytdlp-binary', async () => {
+  logger.userAction('browse-ytdlp-binary');
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: 'Select yt-dlp executable',
+    properties: ['openFile'],
+    buttonLabel: 'Select',
+    filters: executableFilters()
+  });
+  if (result.canceled || !result.filePaths || result.filePaths.length === 0) {
+    return { canceled: true };
+  }
+  const selected = result.filePaths[0];
+  const version = await dependencyManager.detectYtDlpVersion(selected);
+  if (!version) {
+    throw new Error('That file is not a working yt-dlp executable.');
+  }
+  await dependencyManager.writeGlobalSettings(settingsBasePath, { ytDlpPath: selected });
+  await applyYtDlpPath(selected);
+  return { canceled: false, status: await buildDependencyStatus() };
+});
+
+withErrorHandling('browse-ffmpeg-binary', async () => {
+  logger.userAction('browse-ffmpeg-binary');
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: 'Select ffmpeg executable',
+    properties: ['openFile'],
+    buttonLabel: 'Select',
+    filters: executableFilters()
+  });
+  if (result.canceled || !result.filePaths || result.filePaths.length === 0) {
+    return { canceled: true };
+  }
+  const selected = result.filePaths[0];
+  const version = await dependencyManager.detectFfmpegVersion(selected);
+  if (!version) {
+    throw new Error('That file is not a working ffmpeg executable.');
+  }
+  await dependencyManager.writeGlobalSettings(settingsBasePath, { ffmpegPath: selected });
+  await applyFfmpegPath(selected);
+  return { canceled: false, status: await buildDependencyStatus() };
+});
+
+withErrorHandling('download-latest-ytdlp', async () => {
+  logger.userAction('download-latest-ytdlp');
+  const managedDir = dependencyManager.getManagedDir(app.getPath('userData'));
+  const onLog = (message) => emitDependencyProgress({ tool: 'yt-dlp', phase: 'log', message });
+  await dependencyManager.installYtDlp({
+    managedDir,
+    onLog,
+    onProgress: (received, total) => emitDependencyProgress({ tool: 'yt-dlp', phase: 'progress', received, total })
+  });
+  // A freshly downloaded binary takes precedence over any custom selection.
+  await dependencyManager.writeGlobalSettings(settingsBasePath, { ytDlpPath: null });
+  await applyYtDlpPath(null);
+  return { status: await buildDependencyStatus() };
+});
+
+withErrorHandling('download-latest-ffmpeg', async () => {
+  logger.userAction('download-latest-ffmpeg');
+  const managedDir = dependencyManager.getManagedDir(app.getPath('userData'));
+  const onLog = (message) => emitDependencyProgress({ tool: 'ffmpeg', phase: 'log', message });
+  await dependencyManager.installFfmpeg({
+    managedDir,
+    onLog,
+    onProgress: (received, total) => emitDependencyProgress({ tool: 'ffmpeg', phase: 'progress', received, total })
+  });
+  await dependencyManager.writeGlobalSettings(settingsBasePath, { ffmpegPath: null });
+  await applyFfmpegPath(null);
+  return { status: await buildDependencyStatus() };
+});
+
+withErrorHandling('reset-ytdlp', async () => {
+  logger.userAction('reset-ytdlp');
+  await dependencyManager.writeGlobalSettings(settingsBasePath, { ytDlpPath: null });
+  await applyYtDlpPath(null);
+  return { status: await buildDependencyStatus() };
+});
+
+withErrorHandling('reset-ffmpeg', async () => {
+  logger.userAction('reset-ffmpeg');
+  await dependencyManager.writeGlobalSettings(settingsBasePath, { ffmpegPath: null });
+  await applyFfmpegPath(null);
+  return { status: await buildDependencyStatus() };
 });
 
 // IPC handlers for theme configuration

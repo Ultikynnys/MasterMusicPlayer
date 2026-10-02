@@ -2752,6 +2752,11 @@ async function loadSettings() {
     const currentDataPath = await ipcRenderer.invoke('get-current-data-path');
     if (elements.currentDataPath) elements.currentDataPath.value = currentDataPath;
 
+    // Load download-tool (yt-dlp / ffmpeg) status
+    if (typeof window.refreshDependencyStatus === 'function') {
+      await window.refreshDependencyStatus();
+    }
+
     return appConfig;
   } catch (error) {
     frontendLogger.error('Failed to load settings', error);
@@ -3391,6 +3396,134 @@ try {
   }
 } catch (uiErr) {
   console.error('Failed to wire cookies.txt upload button', uiErr);
+}
+
+// Download tools (yt-dlp / ffmpeg) section
+try {
+  const ytdlpPathInput = document.getElementById('ytdlp-path');
+  const ffmpegPathInput = document.getElementById('ffmpeg-path');
+  const ytdlpStatusSpan = document.getElementById('ytdlp-status');
+  const ffmpegStatusSpan = document.getElementById('ffmpeg-status');
+  const progressWrap = document.getElementById('dependency-progress-wrap');
+  const progressBar = document.getElementById('dependency-progress-bar');
+  const progressText = document.getElementById('dependency-progress-text');
+
+  const SOURCE_LABELS = {
+    custom: 'custom',
+    managed: 'downloaded',
+    bundled: 'bundled',
+    static: 'bundled'
+  };
+
+  function formatToolStatus(tool) {
+    if (!tool || !tool.path) {
+      return { text: 'Not found', cls: 'status-indicator status-missing' };
+    }
+    const label = SOURCE_LABELS[tool.source] || tool.source || 'unknown';
+    const version = tool.version ? ` ${tool.version}` : '';
+    return { text: `OK (${label}${version})`, cls: 'status-indicator status-ok' };
+  }
+
+  function applyDependencyStatus(status) {
+    if (!status) return;
+    if (ytdlpPathInput) ytdlpPathInput.value = (status.ytDlp && status.ytDlp.path) || 'Not found';
+    if (ffmpegPathInput) ffmpegPathInput.value = (status.ffmpeg && status.ffmpeg.path) || 'Not found';
+    if (ytdlpStatusSpan) {
+      const s = formatToolStatus(status.ytDlp);
+      ytdlpStatusSpan.textContent = s.text;
+      ytdlpStatusSpan.className = s.cls;
+    }
+    if (ffmpegStatusSpan) {
+      const s = formatToolStatus(status.ffmpeg);
+      ffmpegStatusSpan.textContent = s.text;
+      ffmpegStatusSpan.className = s.cls;
+    }
+  }
+
+  async function refreshDependencyStatus() {
+    try {
+      const status = await ipcRenderer.invoke('get-dependency-status');
+      applyDependencyStatus(status);
+      return status;
+    } catch (err) {
+      frontendLogger.error('Failed to load dependency status', err);
+      return null;
+    }
+  }
+
+  function showDependencyProgress(show) {
+    if (progressWrap) progressWrap.style.display = show ? 'block' : 'none';
+    if (!show) {
+      if (progressBar) progressBar.style.width = '0%';
+      if (progressText) progressText.textContent = '';
+    }
+  }
+
+  function setProgressText(text) {
+    if (progressText) progressText.textContent = text;
+  }
+
+  ipcRenderer.on('dependency-progress', (event, payload) => {
+    if (!payload) return;
+    if (payload.phase === 'log') {
+      setProgressText(payload.message);
+    } else if (payload.phase === 'progress') {
+      const { received = 0, total = 0 } = payload;
+      const receivedMb = (received / 1048576).toFixed(1);
+      if (total > 0) {
+        const pct = Math.min(100, Math.round((received / total) * 100));
+        if (progressBar) progressBar.style.width = pct + '%';
+        setProgressText(`Downloading ${payload.tool}... ${pct}% (${receivedMb} / ${(total / 1048576).toFixed(1)} MB)`);
+      } else {
+        setProgressText(`Downloading ${payload.tool}... ${receivedMb} MB`);
+      }
+    }
+  });
+
+  async function runDependencyAction(channel, label, onSuccess) {
+    const showProgress = channel.indexOf('download-') === 0;
+    try {
+      if (showProgress) {
+        showDependencyProgress(true);
+        setProgressText(`Starting ${label}...`);
+      } else {
+        showLoading(`Waiting for ${label}...`);
+      }
+      const result = await ipcRenderer.invoke(channel);
+      if (!showProgress) hideLoading();
+      if (result && result.status) {
+        applyDependencyStatus(result.status);
+      } else {
+        await refreshDependencyStatus();
+      }
+      showDependencyProgress(false);
+      if (onSuccess) onSuccess();
+    } catch (err) {
+      if (!showProgress) hideLoading();
+      showDependencyProgress(false);
+      frontendLogger.error(`Dependency action failed: ${channel}`, err);
+      showErrorNotification('Download Tools', (err && err.message) || `${label} failed.`);
+    }
+  }
+
+  const browseYtdlpBtn = document.getElementById('browse-ytdlp-btn');
+  const browseFfmpegBtn = document.getElementById('browse-ffmpeg-btn');
+  const downloadYtdlpBtn = document.getElementById('download-ytdlp-btn');
+  const downloadFfmpegBtn = document.getElementById('download-ffmpeg-btn');
+  const resetYtdlpBtn = document.getElementById('reset-ytdlp-btn');
+  const resetFfmpegBtn = document.getElementById('reset-ffmpeg-btn');
+
+  if (browseYtdlpBtn) browseYtdlpBtn.addEventListener('click', () => runDependencyAction('browse-ytdlp-binary', 'yt-dlp selection'));
+  if (browseFfmpegBtn) browseFfmpegBtn.addEventListener('click', () => runDependencyAction('browse-ffmpeg-binary', 'ffmpeg selection'));
+  if (downloadYtdlpBtn) downloadYtdlpBtn.addEventListener('click', () => runDependencyAction('download-latest-ytdlp', 'yt-dlp download', () => showSuccessNotification('yt-dlp', 'Latest yt-dlp installed. New downloads will use it.')));
+  if (downloadFfmpegBtn) downloadFfmpegBtn.addEventListener('click', () => runDependencyAction('download-latest-ffmpeg', 'ffmpeg download', () => showSuccessNotification('ffmpeg', 'Latest ffmpeg installed. New downloads will use it.')));
+  if (resetYtdlpBtn) resetYtdlpBtn.addEventListener('click', () => runDependencyAction('reset-ytdlp', 'yt-dlp reset'));
+  if (resetFfmpegBtn) resetFfmpegBtn.addEventListener('click', () => runDependencyAction('reset-ffmpeg', 'ffmpeg reset'));
+
+  window.refreshDependencyStatus = refreshDependencyStatus;
+  refreshDependencyStatus();
+} catch (uiErr) {
+  console.error('Failed to wire download tools section', uiErr);
 }
 
 // Track current download progress

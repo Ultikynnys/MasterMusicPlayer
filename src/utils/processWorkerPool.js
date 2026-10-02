@@ -27,6 +27,21 @@ class ProcessWorkerPool extends EventEmitter {
     // Workers will be spawned in assignNextTask() when needed.
   }
 
+  /**
+   * Point the pool at new binaries. Workers spawn lazily per task, so subsequent
+   * downloads pick up the new paths; an in-flight download keeps the old binary.
+   */
+  updatePaths(ytDlpPath, ffmpegPath) {
+    if (ytDlpPath) {
+      this.ytDlpPath = ytDlpPath;
+    }
+    this.ffmpegPath = ffmpegPath || null;
+    logger.info('Worker pool binaries updated', {
+      ytDlpPath: this.ytDlpPath,
+      ffmpegPath: this.ffmpegPath
+    });
+  }
+
   // Legacy eager initialisation removed – kept for backward compatibility in case it is called elsewhere
   initializeWorkers() {
     // No-op: workers are now created lazily to save memory
