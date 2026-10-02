@@ -109,7 +109,6 @@
         ]
       },
       "legalTrademarks": "Master Music Player",
-      "publisherName": "Ultikynnys",
       "extraResources": [
         {
           "from": "src/vendor/yt-dlp.exe",
