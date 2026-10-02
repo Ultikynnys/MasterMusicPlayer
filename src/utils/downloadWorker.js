@@ -1,7 +1,7 @@
 const path = require('path');
 const fs = require('fs-extra');
 const { spawn } = require('child_process');
-const { v4: uuidv4 } = require('uuid');
+const { randomUUID } = require('crypto');
 const logger = require('./logger');
 
 const workerId = process.env.WORKER_ID || 'unknown';
@@ -283,7 +283,7 @@ async function downloadTrack(initialTrackInfo, songsPath, taskId, cookiesPath) {
   }
 
   const track = {
-    id: trackInfo.id || uuidv4(),
+    id: trackInfo.id || randomUUID(),
     name: trackInfo.title, // Use 'name' to match renderer's expectation
     artist: trackInfo.artist || trackInfo.uploader,
     album: trackInfo.album,

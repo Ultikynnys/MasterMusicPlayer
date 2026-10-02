@@ -1,0 +1,8 @@
+{
+  "name": "rimraf",
+  "version": "2.6.3",
+  "private": true,
+  "description": "Local rimraf v2 API shim over Node's fs.rm, replacing the deprecated registry rimraf (unused Squirrel path).",
+  "main": "index.js",
+  "license": "MIT"
+}

@@ -4,7 +4,7 @@ const http = require('http');
 const https = require('https');
 const crypto = require('crypto');
 const { spawn } = require('child_process');
-const extract = require('extract-zip');
+const { extractZip } = require('./zipExtract');
 const logger = require('./logger');
 
 const YTDLP_BASE = 'https://github.com/yt-dlp/yt-dlp/releases/latest/download';
@@ -239,7 +239,7 @@ async function findFileRecursive(rootDir, filename) {
 
 function extractArchive(archivePath, destDir, kind) {
   if (kind === 'zip') {
-    return extract(archivePath, { dir: path.resolve(destDir) });
+    return extractZip(archivePath, path.resolve(destDir));
   }
   if (kind === 'tar.xz') {
     return new Promise((resolve, reject) => {

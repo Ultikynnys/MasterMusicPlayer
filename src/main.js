@@ -1,11 +1,10 @@
 const { app, BrowserWindow, ipcMain, dialog, Menu, shell, globalShortcut, powerSaveBlocker } = require('electron');
 const { exec, spawn } = require('child_process');
 const archiver = require('archiver');
-const extract = require('extract-zip');
 const os = require('os');
 const path = require('path');
 const fs = require('fs-extra');
-const { v4: uuidv4 } = require('uuid');
+const { randomUUID } = require('crypto');
 
 const logger = require('./utils/logger');
 const ytDlpHelper = require('./utils/ytDlpHelper');
@@ -608,7 +607,7 @@ withErrorHandling('create-playlist', async (event, name) => {
     await fs.ensureDir(playlistsPath);
 
     const playlist = {
-      id: uuidv4(),
+      id: randomUUID(),
       name: name,
       tracks: [],
       createdAt: new Date().toISOString()
@@ -1728,7 +1727,7 @@ withErrorHandling('add-local-file', async (event, { filePath, playlistId }) => {
     }
 
     const track = {
-      id: uuidv4(),
+      id: randomUUID(),
       name: path.basename(fileName, path.extname(fileName)),
       filePath: toRelativePath(destinationPath), // Store relative path in playlist file
       fileType: fileExt,
@@ -1808,7 +1807,7 @@ withErrorHandling('add-local-file-content', async (event, { fileName, fileConten
     }
 
     const track = {
-      id: uuidv4(),
+      id: randomUUID(),
       name: path.basename(destinationPath, path.extname(destinationPath)),
       filePath: toRelativePath(destinationPath), // Store relative path in playlist file
       fileType: fileExt,
