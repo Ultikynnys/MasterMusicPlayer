@@ -3,6 +3,12 @@
   "version": "1.0.25",
   "description": "A comprehensive music player with yt-dlp integration",
   "main": "src/main.js",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "overrides": {
+    "@electron/asar": "^4.3.1"
+  },
   "scripts": {
     "start": "electron .",
     "dev": "concurrently \"npm run scss:watch\" \"electron . --dev\"",
@@ -29,7 +35,7 @@
     "concurrently": "^10.0.5",
     "electron": "^44.5.1",
     "electron-builder": "^26.15.3",
-    "glob": "^12.0.0",
+    "fast-glob": "^3.3.3",
     "rimraf": "file:./vendor/rimraf",
     "sass": "^1.105.1"
   },

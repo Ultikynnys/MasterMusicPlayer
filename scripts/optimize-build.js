@@ -87,8 +87,13 @@ async function optimizeBuild() {
 }
 
 async function removeGlobPattern(basePath, pattern) {
-  const glob = require('glob');
-  const matches = glob.sync(pattern, { cwd: basePath, absolute: true });
+  const glob = require('fast-glob');
+  const matches = await glob(pattern, {
+    cwd: basePath,
+    absolute: true,
+    onlyFiles: false,
+    followSymbolicLinks: false,
+  });
 
   for (const match of matches) {
     try {
@@ -131,5 +136,8 @@ function formatBytes(bytes) {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
 }
 
-// Run optimization
-optimizeBuild().catch(console.error);
+if (require.main === module) {
+  optimizeBuild().catch(console.error);
+}
+
+module.exports = { removeGlobPattern };
